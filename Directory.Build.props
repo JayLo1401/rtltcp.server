@@ -5,7 +5,7 @@
       -p:Version=x.y.z (computed from the commits since the last tag, like home.control).
       Bump here only for a new base version (e.g. 1.0.0).
     -->
-    <VersionPrefix>0.1.0</VersionPrefix>
+    <VersionPrefix>1.0.0</VersionPrefix>
 
     <TargetFramework>net10.0</TargetFramework>
     <LangVersion>latest</LangVersion>
@@ -17,5 +17,6 @@
     <Product>rtltcp.server</Product>
     <Copyright>Copyright (c) 2026 Jürgen Laschak</Copyright>
     <PackageLicenseExpression>PolyForm-Noncommercial-1.0.0</PackageLicenseExpression>
+    <DebugType Condition="'$(Configuration)' == 'Release'">none</DebugType>
   </PropertyGroup>
 </Project>

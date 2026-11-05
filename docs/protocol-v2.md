@@ -154,6 +154,11 @@ ClientProof    = ClientKey XOR HMAC(StoredKey, AuthMessage)
 ServerSignature= HMAC(ServerKey, AuthMessage)
 ```
 
+**Client without credentials.** If `server_info.auth == "required"` but the user has not configured credentials,
+the client should tell the user ("Server requires authentication") and disconnect. The server enforces this anyway:
+any message other than `auth_start` – or nothing within **10 s** – is answered with
+`{"type":"error","code":"AUTH_REQUIRED","message":"Authentication required: …","fatal":true}` and the connection is closed.
+
 The server stores only `salt`, `iterations`, `StoredKey`, `ServerKey` per user.
 For unknown users the server answers with a deterministic fake salt (no user enumeration).
 Users must be **enabled** and **permitted for this device** in the web GUI; otherwise `AUTH_FAILED`

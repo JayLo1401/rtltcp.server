@@ -38,6 +38,9 @@ public interface IStreamOwner
 
 public sealed record TunerSnapshot(TunerType Type, string Name, int[] Gains);
 
+/// <summary>Current tuning as last requested by the client (or the defaults). Gain null = auto.</summary>
+public sealed record TuningSnapshot(ulong? Frequency, uint? SampleRate, int? Gain, bool BiasTee);
+
 /// <summary>
 /// Owns one stick: open/close, idle shutdown, reconnect, ownership ("first come, first served").
 /// All state changes run sequentially on one loop; public methods only post signals.
@@ -78,6 +81,7 @@ public sealed class DeviceManager : IAsyncDisposable
         _log = log;
         _claimedSerials = claimedSerials ?? (() => []);
         _settings = DeviceSettings.FromDefaults(config.Defaults);
+        UpdateTuning();
         _loop = Task.Run(RunAsync);
         if (config.IdleTimeoutSeconds <= 0) Post(new Retry()); // always-on: open right away
     }
@@ -92,6 +96,27 @@ public sealed class DeviceManager : IAsyncDisposable
     public TunerSnapshot? Tuner { get; private set; }
     public IStreamOwner? Owner => Volatile.Read(ref _owner);
 
+    /// <summary>When the current owner connected.</summary>
+    public DateTimeOffset? OwnerSince { get; private set; }
+
+    /// <summary>IQ bytes handed to clients since start (for rate display).</summary>
+    public long BytesStreamed => Interlocked.Read(ref _bytes);
+
+    public TuningSnapshot Tuning { get; private set; } = new(null, null, null, false);
+
+    private long _bytes;
+
+    private void UpdateTuning()
+    {
+        var gainMode = _settings.Get(RtlCommand.SetGainMode) ?? 0;
+        int? gain = gainMode == 0 ? null
+            : _settings.Get(RtlCommand.SetGain) is { } g ? unchecked((int)g)
+            : _settings.Get(RtlCommand.SetGainByIndex) is { } i && Tuner is { Gains.Length: > 0 } t ? t.Gains[Math.Min((int)i, t.Gains.Length - 1)]
+            : null;
+        Tuning = new TuningSnapshot(_settings.Get(RtlCommand.SetFrequency), _settings.Get(RtlCommand.SetSampleRate), gain,
+            _settings.Get(RtlCommand.SetBiasTee) is 1);
+    }
+
     // ---------------------------------------------------------------- public API (thread-safe)
 
     /// <summary>Takes ownership. Returns false (and the current owner) if another client owns the stick.</summary>
@@ -102,6 +127,7 @@ public sealed class DeviceManager : IAsyncDisposable
             current = _owner;
             if (current is not null) return false;
             Volatile.Write(ref _owner, owner);
+            OwnerSince = DateTimeOffset.Now;
         }
         _log.LogInformation("{Device}: client {Client} connected", Config.Name, owner.RemoteAddress);
         Post(new OwnerChanged(owner));
@@ -114,6 +140,7 @@ public sealed class DeviceManager : IAsyncDisposable
         {
             if (_owner != owner) return;
             Volatile.Write(ref _owner, null);
+            OwnerSince = null;
         }
         _log.LogInformation("{Device}: client {Client} disconnected", Config.Name, owner.RemoteAddress);
         Post(new OwnerChanged(null));
@@ -162,6 +189,7 @@ public sealed class DeviceManager : IAsyncDisposable
             case OwnerChanged { Owner: { } owner }:
                 _idleGeneration++;
                 _settings = DeviceSettings.FromDefaults(Config.Defaults);
+                UpdateTuning();
                 if (_device is null) TryOpen();
                 else
                 {
@@ -271,6 +299,7 @@ public sealed class DeviceManager : IAsyncDisposable
                 return;
             }
             _settings.Remember(cmd);
+            UpdateTuning();
         }
         catch (ArgumentOutOfRangeException ex)
         {
@@ -334,8 +363,10 @@ public sealed class DeviceManager : IAsyncDisposable
     {
         public void OnData(ReadOnlySpan<byte> data)
         {
-            if (generation == Volatile.Read(ref manager._streamGeneration))
-                Volatile.Read(ref manager._owner)?.OnIq(data);
+            if (generation != Volatile.Read(ref manager._streamGeneration)) return;
+            if (Volatile.Read(ref manager._owner) is not { } owner) return;
+            owner.OnIq(data);
+            Interlocked.Add(ref manager._bytes, data.Length);
         }
 
         public void OnError(UsbException error) => manager.Post(new StreamFailed(generation, error));

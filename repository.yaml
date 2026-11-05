@@ -1,0 +1,4 @@
+# Home Assistant add-on repository (Einstellungen → Add-ons → Add-on Store → ⋮ → Repositories)
+name: rtltcp.server (jaycloud)
+url: https://github.com/JayLo1401/rtltcp.server
+maintainer: jaycloud <noreply@jaycloud.at>

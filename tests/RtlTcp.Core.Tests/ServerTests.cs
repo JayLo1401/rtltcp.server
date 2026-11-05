@@ -136,6 +136,21 @@ public sealed class ServerTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task BUSY_reaches_a_client_that_already_sent_commands()
+    {
+        // The client sends its start commands right after HELLO without waiting; the server must still deliver
+        // the BUSY frame (no RST because of unread data).
+        await using var first = await TestClient.ConnectAsync(Port);
+        await first.ReadAsync(V1.HeaderSize);
+
+        await using var second = await TestClient.ConnectAsync(Port);
+        await second.SendHelloAsync();
+        for (var i = 0; i < 50; i++) await second.SendCommandV2Async(RtlCommand.SetFrequency, 100_000_000);
+        await second.ReadAsync(V2.HeaderSize);
+        Assert.Equal(ErrorCodes.Busy, (await second.ExpectAsync<ErrorMessage>()).Code);
+    }
+
+    [Fact]
     public async Task V2_invalid_command_is_reported_but_not_fatal()
     {
         await using var c = await TestClient.ConnectAsync(Port);
@@ -258,12 +273,38 @@ public sealed class ServerTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task V2_without_auth_message_gets_AUTH_REQUIRED()
+    public async Task V2_client_sending_commands_without_auth_gets_AUTH_REQUIRED_immediately()
     {
         await using var c = await ConnectWithAuthAsync();
         await c.SendCommandV2Async(RtlCommand.SetFrequency, 1);
-        await c.SendJsonAsync(new PingMessage(1));
-        Assert.Equal(ErrorCodes.AuthRequired, (await c.ExpectAsync<ErrorMessage>()).Code);
+        var error = await c.ExpectAsync<ErrorMessage>();
+        Assert.Equal(ErrorCodes.AuthRequired, error.Code);
+        Assert.StartsWith("Authentication required", error.Message);
+        Assert.True(await c.IsClosedAsync());
         Assert.Null(_manager.Owner);
+    }
+
+    [Fact]
+    public async Task V2_client_that_stays_silent_gets_AUTH_REQUIRED_after_timeout()
+    {
+        ClientSession.AuthTimeout = TimeSpan.FromMilliseconds(300);
+        try
+        {
+            await using var c = await ConnectWithAuthAsync();
+            Assert.Equal(ErrorCodes.AuthRequired, (await c.ExpectAsync<ErrorMessage>()).Code);
+            Assert.True(await c.IsClosedAsync());
+        }
+        finally
+        {
+            ClientSession.AuthTimeout = TimeSpan.FromSeconds(10);
+        }
+    }
+
+    [Fact]
+    public async Task Trusted_network_needs_no_auth_even_when_auth_is_enabled()
+    {
+        _policy = new AccessPolicy(authEnabled: true, AccessPolicy.DefaultTrustedNetworks); // 127.0.0.1 is trusted
+        await using var c = await TestClient.ConnectAsync(Port);
+        Assert.Equal("RTL0"u8.ToArray(), (await c.ReadAsync(V1.HeaderSize))[..4]);
     }
 }

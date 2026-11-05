@@ -12,6 +12,11 @@ namespace RtlTcp.Core.Server;
 /// <summary>One TCP client, v1 or v2 (decided by HELLO), see docs/protocol-v2.md.</summary>
 internal sealed class ClientSession : IStreamOwner
 {
+    internal const string AuthRequiredText = "Authentication required: the server only accepts authenticated clients";
+
+    /// <summary>How long a v2 client may take to start authentication (tests shorten it).</summary>
+    internal static TimeSpan AuthTimeout { get; set; } = TimeSpan.FromSeconds(10);
+
     private const int IqQueueBuffers = 64;
     private const int V2IqFrameSize = 64 * 1024;
 
@@ -187,14 +192,24 @@ internal sealed class ClientSession : IStreamOwner
 
         if (!authRequired) return true;
 
-        // SCRAM exchange; any unexpected message counts as a failed login.
+        // SCRAM exchange. A client that does not start it (sends something else or nothing within
+        // AuthTimeout) is told that authentication is required and disconnected.
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
-        timeout.CancelAfter(TimeSpan.FromSeconds(30));
+        timeout.CancelAfter(AuthTimeout);
         var scram = new ScramServerSession(u => _users.Find(u, serial), _users.ServerSecret);
 
-        if (await ReadJsonAsync(timeout.Token) is not AuthStartMessage start)
+        V2Message? first;
+        try
         {
-            await SendFatalAsync(ErrorCodes.AuthRequired, "Authentication required");
+            first = await ReadJsonAsync(timeout.Token);
+        }
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+        {
+            first = null;
+        }
+        if (first is not AuthStartMessage start)
+        {
+            await SendFatalAsync(ErrorCodes.AuthRequired, AuthRequiredText);
             return false;
         }
         try
@@ -220,13 +235,11 @@ internal sealed class ClientSession : IStreamOwner
         return true;
     }
 
+    /// <summary>Reads the next frame; non-JSON frames (e.g. commands sent before authenticating) yield null.</summary>
     private async Task<V2Message?> ReadJsonAsync(CancellationToken ct)
     {
-        while (true)
-        {
-            var (type, payload) = await ReadFrameAsync(ct);
-            if (type == FrameType.Json) return V2Json.Deserialize(payload);
-        }
+        var (type, payload) = await ReadFrameAsync(ct);
+        return type == FrameType.Json ? V2Json.Deserialize(payload) : null;
     }
 
     private async Task<(FrameType Type, byte[] Payload)> ReadFrameAsync(CancellationToken ct)
@@ -280,6 +293,23 @@ internal sealed class ClientSession : IStreamOwner
     {
         _log.LogInformation("{Client}: {Code} {Message}", RemoteAddress, code, message);
         await TrySendAsync(Frame(new ErrorMessage(code, message, true, client)));
+        await GracefulCloseAsync();
+    }
+
+    /// <summary>
+    /// Sends FIN and reads (discards) what the client still sends, up to 1 s. Closing a socket with unread
+    /// incoming data makes the OS send RST, and the client may then never see the error frame we just sent.
+    /// </summary>
+    private async Task GracefulCloseAsync()
+    {
+        try
+        {
+            _socket.Shutdown(SocketShutdown.Send);
+            using var t = new CancellationTokenSource(TimeSpan.FromSeconds(1));
+            var buf = new byte[4096];
+            while (await _socket.ReceiveAsync(buf, SocketFlags.None, t.Token) > 0) { }
+        }
+        catch (Exception ex) when (ex is SocketException or OperationCanceledException or ObjectDisposedException) { }
     }
 
     private async Task TrySendAsync(byte[] data)
@@ -305,7 +335,7 @@ internal sealed class ClientSession : IStreamOwner
                     await _net.WriteAsync(c.Data, ct);
                     if (c.CloseAfter)
                     {
-                        _socket.Shutdown(SocketShutdown.Both);
+                        await GracefulCloseAsync();
                         await _cts.CancelAsync();
                         return;
                     }

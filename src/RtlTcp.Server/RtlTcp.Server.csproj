@@ -4,6 +4,17 @@
     <AssemblyName>rtltcp-server</AssemblyName>
     <RootNamespace>RtlTcp.Server</RootNamespace>
     <InvariantGlobalization>true</InvariantGlobalization>
+    <ApplicationIcon>..\..\packaging\windows\rtltcp.ico</ApplicationIcon>
+    <!-- Web GUI is embedded into the assembly (works with single-file publish, nothing to deploy separately) -->
+    <GenerateEmbeddedFilesManifest>true</GenerateEmbeddedFilesManifest>
+    <!-- No IIS web.config, no static web asset manifests: the GUI is embedded, the app is self-hosted -->
+    <IsTransformWebConfigDisabled>true</IsTransformWebConfigDisabled>
+    <StaticWebAssetsEnabled>false</StaticWebAssetsEnabled>
+    <!-- Release builds: one self-contained file per platform (libusb stays a separate file on Windows) -->
+    <SelfContained Condition="'$(RuntimeIdentifier)' != ''">true</SelfContained>
+    <PublishSingleFile Condition="'$(RuntimeIdentifier)' != ''">true</PublishSingleFile>
+    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+    <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
   </PropertyGroup>
 
   <ItemGroup>
@@ -12,8 +23,22 @@
   </ItemGroup>
 
   <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.FileProviders.Embedded" Version="10.0.14" />
     <PackageReference Include="Microsoft.Extensions.Hosting.Systemd" Version="10.0.14" />
     <PackageReference Include="Microsoft.Extensions.Hosting.WindowsServices" Version="10.0.14" />
+  </ItemGroup>
+
+  <!-- Windows release: libusb-1.0.dll (LGPL) next to the exe, replaceable, never inside the single file -->
+  <ItemGroup Condition="$(RuntimeIdentifier.StartsWith('win-'))">
+    <None Include="..\RtlTcp.Usb.LibUsb\runtimes\$(RuntimeIdentifier)\native\libusb-1.0.dll" Link="libusb-1.0.dll"
+          CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" ExcludeFromSingleFile="true" />
+    <None Include="..\RtlTcp.Usb.LibUsb\runtimes\LIBUSB-COPYING.txt" Link="LIBUSB-COPYING.txt"
+          CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" ExcludeFromSingleFile="true" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Content Remove="wwwroot\**" />
+    <EmbeddedResource Include="wwwroot\**" />
   </ItemGroup>
 
 </Project>

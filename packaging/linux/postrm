@@ -1,0 +1,17 @@
+#!/bin/sh
+set -e
+
+if [ -d /run/systemd/system ]; then
+    systemctl daemon-reload || true
+fi
+
+# purge: also remove configuration, users, logs and the service account
+if [ "$1" = "purge" ]; then
+    rm -rf /var/lib/rtltcp-server
+    rm -f /etc/default/rtltcp-server
+    if getent passwd rtltcp >/dev/null; then
+        userdel rtltcp || true
+    fi
+fi
+
+exit 0

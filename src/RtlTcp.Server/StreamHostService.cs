@@ -3,11 +3,12 @@ using RtlTcp.Core.Auth;
 using RtlTcp.Core.Config;
 using RtlTcp.Core.Device;
 using RtlTcp.Core.Server;
+using RtlTcp.Core.Usb;
 using RtlTcp.Usb.LibUsb;
 
 namespace RtlTcp.Server;
 
-/// <summary>Starts one DeviceManager + StreamServer per configured stick.</summary>
+/// <summary>Starts one DeviceManager + StreamServer per configured stick; can restart them after config changes.</summary>
 public sealed class StreamHostService(ServerConfigHolder config, UserStore users, ILoggerFactory loggers) : IHostedService
 {
     public static string Version { get; } =
@@ -15,67 +16,119 @@ public sealed class StreamHostService(ServerConfigHolder config, UserStore users
             .Split('+')[0] ?? "0.0.0";
 
     private readonly ILogger _log = loggers.CreateLogger("rtltcp");
-    private readonly List<(DeviceManager Manager, StreamServer Server)> _devices = [];
+    private readonly SemaphoreSlim _gate = new(1, 1);
+    private List<(DeviceManager Manager, StreamServer Server)> _devices = [];
     private LibUsbBackend? _usb;
+    private RtlSdrDeviceSource? _source;
 
+    /// <summary>Running devices, keyed by their config entry.</summary>
     public IReadOnlyList<DeviceManager> Managers => _devices.Select(d => d.Manager).ToList();
 
-    public Task StartAsync(CancellationToken cancellationToken)
+    /// <summary>Error per port that could not be started (e.g. port in use).</summary>
+    public IReadOnlyDictionary<int, string> StartErrors { get; private set; } = new Dictionary<int, string>();
+
+    public IReadOnlyList<UsbDeviceInfo> ConnectedSticks() => _source?.List() ?? [];
+
+    public async Task StartAsync(CancellationToken cancellationToken)
     {
         _log.LogInformation("rtltcp.server {Version}, data directory {Dir}", Version, config.DataDir);
         _usb = new LibUsbBackend();
-        var source = new RtlSdrDeviceSource(_usb);
+        _source = new RtlSdrDeviceSource(_usb);
+        if (config.Current.Devices.Count == 0) AutoConfigure(config.Current, _source);
 
+        await _gate.WaitAsync(cancellationToken);
+        try { StartDevices(); }
+        finally { _gate.Release(); }
+    }
+
+    /// <summary>Applies a changed device list: stops all stream servers (clients are disconnected) and starts them again.</summary>
+    public async Task ReloadAsync()
+    {
+        await _gate.WaitAsync();
+        try
+        {
+            await StopDevicesAsync();
+            StartDevices();
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
+    private void StartDevices()
+    {
         var cfg = config.Current;
-        if (cfg.Devices.Count == 0) AutoConfigure(cfg, source);
-
+        var started = new List<(DeviceManager, StreamServer)>();
+        var errors = new Dictionary<int, string>();
         foreach (var dc in cfg.Devices.Where(d => d.Enabled))
         {
             var others = cfg.Devices.Where(d => d != dc && d.Serial.Length > 0).Select(d => d.Serial).ToArray();
-            var manager = new DeviceManager(dc, source, loggers.CreateLogger($"device.{dc.Port}"), () => others);
+            var manager = new DeviceManager(dc, _source!, loggers.CreateLogger($"device.{dc.Port}"), () => others);
             var server = new StreamServer(manager, () => config.Policy, users, Version, loggers.CreateLogger($"stream.{dc.Port}"));
             try
             {
                 server.Start();
-                _devices.Add((manager, server));
+                started.Add((manager, server));
             }
             catch (System.Net.Sockets.SocketException ex)
             {
                 _log.LogError("{Device}: cannot listen on {Bind}:{Port}: {Error}", dc.Name, dc.Bind, dc.Port, ex.Message);
+                errors[dc.Port] = ex.Message;
                 _ = manager.DisposeAsync();
             }
         }
-        return Task.CompletedTask;
+        _devices = started;
+        StartErrors = errors;
+    }
+
+    private async Task StopDevicesAsync()
+    {
+        var devices = _devices;
+        _devices = [];
+        foreach (var (manager, server) in devices)
+        {
+            await server.DisposeAsync();
+            await manager.DisposeAsync();
+        }
     }
 
     /// <summary>First start: one entry per connected stick, ports from 1234 upwards.</summary>
     private void AutoConfigure(ServerConfig cfg, ISdrDeviceSource source)
     {
         var sticks = source.List().Where(s => s.Serial is not null).ToList();
-        var port = 1234;
+        // RTLTCP_STREAM_PORT: set by the Linux installer (/etc/default/rtltcp-server)
+        var port = int.TryParse(Environment.GetEnvironmentVariable("RTLTCP_STREAM_PORT"), out var p) && p is > 0 and < 65536
+            ? p : cfg.StreamBasePort;
         foreach (var s in sticks)
             cfg.Devices.Add(new DeviceConfig { Serial = s.Serial!, Name = $"RTL-SDR {s.Serial}", Port = port++ });
         if (cfg.Devices.Count == 0)
-            cfg.Devices.Add(new DeviceConfig { Serial = "", Name = "RTL-SDR", Port = 1234 }); // first stick that shows up
+            cfg.Devices.Add(new DeviceConfig { Serial = "", Name = "RTL-SDR", Port = port }); // first stick that shows up
         config.Save();
         _log.LogInformation("Created {Path} with {Count} device(s)", config.ConfigPath, cfg.Devices.Count);
     }
 
     public async Task StopAsync(CancellationToken cancellationToken)
     {
-        foreach (var (manager, server) in _devices)
+        await _gate.WaitAsync(cancellationToken);
+        try
         {
-            await server.DisposeAsync();
-            await manager.DisposeAsync();
+            await StopDevicesAsync();
+            _usb?.Dispose();
+            _usb = null;
         }
-        _devices.Clear();
-        _usb?.Dispose();
+        finally
+        {
+            _gate.Release();
+        }
     }
 }
 
-/// <summary>Current configuration; the web GUI will update it at runtime.</summary>
+/// <summary>Current configuration; changed by the web GUI at runtime.</summary>
 public sealed class ServerConfigHolder
 {
+    private readonly Lock _lock = new();
+
     public ServerConfigHolder(string dataDir)
     {
         DataDir = dataDir;
@@ -86,13 +139,31 @@ public sealed class ServerConfigHolder
 
     public string DataDir { get; }
     public string ConfigPath { get; }
-    public ServerConfig Current { get; }
+    public ServerConfig Current { get; private set; }
+
+    /// <summary>Read per stream connection, so auth changes apply to the next connection without restart.</summary>
     public AccessPolicy Policy { get; private set; }
 
     public void Save()
     {
-        Current.Save(ConfigPath);
-        Policy = BuildPolicy();
+        lock (_lock)
+        {
+            Current.Save(ConfigPath);
+            Policy = BuildPolicy();
+        }
+    }
+
+    /// <summary>Replaces parts of the configuration atomically and saves.</summary>
+    public void Update(Action<ServerConfig> change)
+    {
+        lock (_lock)
+        {
+            var copy = ServerConfig.Clone(Current);
+            change(copy);
+            copy.Save(ConfigPath);
+            Current = copy;
+            Policy = BuildPolicy();
+        }
     }
 
     private AccessPolicy BuildPolicy() => new(Current.Auth.Enabled, Current.Auth.TrustedNetworks);

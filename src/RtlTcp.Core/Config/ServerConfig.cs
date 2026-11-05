@@ -7,7 +7,12 @@ namespace RtlTcp.Core.Config;
 public sealed class ServerConfig
 {
     public WebConfig Web { get; set; } = new();
+
+    /// <summary>Port of the first stick; further sticks get the following ports. Chosen during installation.</summary>
+    public int StreamBasePort { get; set; } = 1234;
     public AuthConfig Auth { get; set; } = new();
+    public LogConfig Logging { get; set; } = new();
+    public UpdateConfig Update { get; set; } = new();
     public List<DeviceConfig> Devices { get; set; } = [];
 
     private static readonly JsonSerializerOptions Json = new()
@@ -18,6 +23,10 @@ public sealed class ServerConfig
         ReadCommentHandling = JsonCommentHandling.Skip,
         AllowTrailingCommas = true,
     };
+
+    /// <summary>Deep copy (via JSON) so changes can be validated and saved before they become visible.</summary>
+    public static ServerConfig Clone(ServerConfig c) =>
+        JsonSerializer.Deserialize<ServerConfig>(JsonSerializer.Serialize(c, Json), Json)!;
 
     public static ServerConfig Load(string path) =>
         File.Exists(path)
@@ -38,6 +47,24 @@ public sealed class WebConfig
 {
     public string Bind { get; set; } = "0.0.0.0";
     public int Port { get; set; } = 8080;
+}
+
+public sealed class UpdateConfig
+{
+    /// <summary>Install new releases automatically at <see cref="Time"/> (Windows installer / Linux package only).</summary>
+    public bool AutoUpdate { get; set; } = true;
+
+    /// <summary>Local time "HH:mm" for the daily automatic update.</summary>
+    public string Time { get; set; } = "04:00";
+}
+
+public sealed class LogConfig
+{
+    /// <summary>Daily log files older than this are deleted (1–365).</summary>
+    public int RetentionDays { get; set; } = 14;
+
+    /// <summary>Also log each IQ connection's details at debug level.</summary>
+    public bool Debug { get; set; }
 }
 
 public sealed class AuthConfig

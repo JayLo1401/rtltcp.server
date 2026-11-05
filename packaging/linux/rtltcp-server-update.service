@@ -1,0 +1,10 @@
+[Unit]
+Description=rtltcp.server update (installs the latest release from repository.jaycloud.at)
+Documentation=https://github.com/JayLo1401/rtltcp.server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/opt/rtltcp-server/update.sh
+TimeoutStartSec=15min

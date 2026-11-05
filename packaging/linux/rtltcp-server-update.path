@@ -1,0 +1,10 @@
+[Unit]
+Description=rtltcp.server update request (web interface / automatic update)
+
+[Path]
+# Created by the server (user rtltcp); update.sh removes it again.
+PathExists=/var/lib/rtltcp-server/update-request
+Unit=rtltcp-server-update.service
+
+[Install]
+WantedBy=multi-user.target

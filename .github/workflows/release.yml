@@ -1,0 +1,241 @@
+name: Release
+
+# Every push to main builds a release (same scheme as home.control / home.radio):
+#   1. prepare: next version from the commits since the last release (tag v* with a GitHub Release,
+#      see .github/scripts/prepare_release.py) - the version goes into the builds via -p:Version.
+#   2. test: dotnet test.
+#   3. linux + windows in parallel, each uploads to the Nexus raw repository as soon as it's done:
+#        <NEXUS_URL>/repository/<NEXUS_REPO>/<platform>/release/<version>/...
+#        <NEXUS_URL>/repository/<NEXUS_REPO>/<platform>/release/latest/...   (+ version.json, install.sh)
+#      linux: .deb for amd64/arm64/armhf + tar.gz per architecture (used by the Home Assistant add-on)
+#      windows: Inno Setup installer
+#   4. release: only when everything succeeded - tag v<version>, GitHub Release with notes and links to
+#      Nexus (no files on GitHub), then the Home Assistant add-on version is bumped ([skip ci] commit) so
+#      Home Assistant offers the update. If a build fails there is no tag; the next push builds again.
+#
+# Secrets:   NEXUS_USER, NEXUS_PASS
+# Variables: NEXUS_URL (https://repository.jaycloud.at), NEXUS_REPO (rtltcp.server)
+#            The Nexus raw repository must be readable anonymously (install.sh, Home Assistant).
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - "**.md"
+      - "docs/**"
+      - "homeassistant/**"
+      - "repository.yaml"
+  workflow_dispatch: {}
+
+concurrency:
+  group: release-main
+  cancel-in-progress: false
+
+env:
+  DOTNET_VERSION: "10.0.x"
+  DOTNET_CLI_TELEMETRY_OPTOUT: "1"
+  DOTNET_NOLOGO: "1"
+  BASE_URL: ${{ vars.NEXUS_URL }}/repository/${{ vars.NEXUS_REPO }}
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      notes: ${{ steps.version.outputs.notes }}
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - name: Check configuration
+        run: |
+          [ -n "${{ vars.NEXUS_URL }}" ] && [ -n "${{ vars.NEXUS_REPO }}" ] \
+            || { echo "::error::Variables NEXUS_URL and NEXUS_REPO are missing"; exit 1; }
+      - name: Next version
+        id: version
+        run: |
+          git fetch origin --tags --force
+          BASE_REF=""
+          for TAG in $(git tag -l 'v*' --sort=-v:refname); do
+            if gh release view "$TAG" >/dev/null 2>&1; then BASE_REF="$TAG"; break; fi
+          done
+          BASE_VERSION="${BASE_REF#v}"
+          export BASE_REF BASE_VERSION NOTES_PATH="$RUNNER_TEMP/release_notes.md"
+          VERSION="$(python3 .github/scripts/prepare_release.py)"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          DELIM="NOTES_$(openssl rand -hex 8)"
+          { echo "notes<<$DELIM"; cat "$NOTES_PATH"; echo; echo "$DELIM"; } >> "$GITHUB_OUTPUT"
+          echo "Version $VERSION (base ${BASE_REF:-none})"
+
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+      - name: Test
+        run: dotnet test -c Release
+
+  linux:
+    needs: [prepare, test]
+    runs-on: ubuntu-latest
+    outputs:
+      sha_amd64: ${{ steps.upload.outputs.sha_amd64 }}
+      sha_arm64: ${{ steps.upload.outputs.sha_arm64 }}
+      sha_armhf: ${{ steps.upload.outputs.sha_armhf }}
+    env:
+      VERSION: ${{ needs.prepare.outputs.version }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+      - name: Build
+        run: |
+          mkdir -p dist
+          for PAIR in linux-x64:amd64 linux-arm64:arm64 linux-arm:armhf; do
+            RID="${PAIR%%:*}"; ARCH="${PAIR##*:}"
+            PUB="artifacts/publish/$RID"
+            dotnet publish src/RtlTcp.Server -c Release -r "$RID" -p:Version="$VERSION" -o "$PUB"
+            test -x "$PUB/rtltcp-server"
+            # tar.gz: the bare program (used by the Home Assistant add-on)
+            TAR="dist/rtltcp-server-$VERSION-$RID.tar.gz"
+            tar -czf "$TAR" -C "$PUB" rtltcp-server -C "$GITHUB_WORKSPACE" LICENSE.md THIRD-PARTY-NOTICES.md
+            sha256sum "$TAR" | cut -d' ' -f1 > "$TAR.sha256"
+            bash packaging/linux/build-deb.sh "$VERSION" "$ARCH" "$PUB" dist "$BASE_URL"
+          done
+          "artifacts/publish/linux-x64/rtltcp-server" --version
+          ls -la dist
+      - name: Check package
+        run: |
+          dpkg-deb --info "dist/rtltcp-server_${VERSION}_amd64.deb"
+          dpkg-deb --contents "dist/rtltcp-server_${VERSION}_amd64.deb"
+      - name: Upload to Nexus
+        id: upload
+        env:
+          NEXUS_USER: ${{ secrets.NEXUS_USER }}
+          NEXUS_PASS: ${{ secrets.NEXUS_PASS }}
+        run: |
+          [ -n "$NEXUS_USER" ] || { echo "::error::Secret NEXUS_USER is missing"; exit 1; }
+          source .github/scripts/nexus_upload.sh
+          BASE="$BASE_URL/linux/release"
+          {
+            echo "{"
+            echo "  \"version\": \"$VERSION\","
+            echo "  \"debs\": {"
+            SEP=""
+            for ARCH in amd64 arm64 armhf; do
+              DEB="rtltcp-server_${VERSION}_${ARCH}.deb"
+              SHA=$(sha256sum "dist/$DEB" | cut -d' ' -f1)
+              echo "sha_$ARCH=$SHA" >> "$GITHUB_OUTPUT"
+              printf '%s    "%s": {"url": "%s", "sha256": "%s"}' "$SEP" "$ARCH" "$BASE/$VERSION/$DEB" "$SHA"
+              SEP=$',\n'
+            done
+            printf '\n  }\n}\n'
+          } > dist/version.json
+          cat dist/version.json
+          sed "s#__BASE_URL__#$BASE_URL#g" packaging/linux/install.sh > dist/install.sh
+          for F in dist/*.deb dist/*.tar.gz dist/*.sha256; do
+            upload "$F" "$BASE/$VERSION/$(basename "$F")"
+          done
+          upload dist/version.json "$BASE/$VERSION/version.json"
+          upload dist/install.sh "$BASE/$VERSION/install.sh"
+          # Last: only now does install.sh see the new version
+          upload dist/install.sh "$BASE/latest/install.sh"
+          upload dist/version.json "$BASE/latest/version.json"
+
+  windows:
+    needs: [prepare, test]
+    runs-on: windows-latest
+    outputs:
+      sha: ${{ steps.upload.outputs.sha }}
+    env:
+      VERSION: ${{ needs.prepare.outputs.version }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+      - name: Inno Setup
+        run: choco install innosetup --no-progress -y
+      - name: Build
+        shell: pwsh
+        run: ./packaging/windows/build-installer.ps1 -Version $env:VERSION -BaseUrl $env:BASE_URL
+      - name: Upload to Nexus
+        id: upload
+        shell: bash
+        env:
+          NEXUS_USER: ${{ secrets.NEXUS_USER }}
+          NEXUS_PASS: ${{ secrets.NEXUS_PASS }}
+        run: |
+          [ -n "$NEXUS_USER" ] || { echo "::error::Secret NEXUS_USER is missing"; exit 1; }
+          source .github/scripts/nexus_upload.sh
+          BASE="$BASE_URL/windows/release"
+          OUT=packaging/windows/output
+          echo "sha=$(sha256sum "$OUT/setup.exe" | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+          cat "$OUT/version.json"
+          upload "$OUT/setup.exe" "$BASE/$VERSION/rtltcp-server-setup-$VERSION.exe"
+          upload "$OUT/version.json" "$BASE/$VERSION/version.json"
+          upload "$OUT/setup.exe" "$BASE/latest/rtltcp-server-setup.exe"
+          upload "$OUT/version.json" "$BASE/latest/version.json"
+
+  release:
+    needs: [prepare, linux, windows]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      VERSION: ${{ needs.prepare.outputs.version }}
+      NOTES: ${{ needs.prepare.outputs.notes }}
+      SHA_AMD64: ${{ needs.linux.outputs.sha_amd64 }}
+      SHA_ARM64: ${{ needs.linux.outputs.sha_arm64 }}
+      SHA_ARMHF: ${{ needs.linux.outputs.sha_armhf }}
+      SHA_WINDOWS: ${{ needs.windows.outputs.sha }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - name: Tag and GitHub Release
+        run: |
+          TAG="v$VERSION"
+          W="$BASE_URL/windows/release/$VERSION"
+          L="$BASE_URL/linux/release/$VERSION"
+          {
+            printf '%s\n' "$NOTES"
+            echo
+            echo "## Downloads"
+            echo
+            echo "| Datei | Für | SHA-256 |"
+            echo "|---|---|---|"
+            echo "| [rtltcp-server-setup-$VERSION.exe]($W/rtltcp-server-setup-$VERSION.exe) | Windows 10/11 (64-bit) | \`$SHA_WINDOWS\` |"
+            echo "| [rtltcp-server_${VERSION}_amd64.deb]($L/rtltcp-server_${VERSION}_amd64.deb) | Debian/Ubuntu (64-bit PC) | \`$SHA_AMD64\` |"
+            echo "| [rtltcp-server_${VERSION}_arm64.deb]($L/rtltcp-server_${VERSION}_arm64.deb) | Raspberry Pi 3/4/5 mit 64-bit-System | \`$SHA_ARM64\` |"
+            echo "| [rtltcp-server_${VERSION}_armhf.deb]($L/rtltcp-server_${VERSION}_armhf.deb) | Raspberry Pi mit 32-bit-System | \`$SHA_ARMHF\` |"
+            echo
+            echo "Linux / Raspberry Pi in einem Schritt: \`curl -fsSL $BASE_URL/linux/release/latest/install.sh | bash\`"
+            echo
+            echo "Home Assistant: Add-on-Repository \`https://github.com/${{ github.repository }}\` hinzufügen (siehe docs/homeassistant.md)."
+          } > "$RUNNER_TEMP/notes.md"
+          git tag "$TAG" "$GITHUB_SHA"
+          git push origin "$TAG"
+          gh release create "$TAG" --title "rtltcp.server $VERSION" --notes-file "$RUNNER_TEMP/notes.md" --latest
+      - name: Home Assistant add-on version
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          for TRY in 1 2 3; do
+            git fetch origin main
+            git checkout -B main origin/main
+            sed -i "s/^version: .*/version: \"$VERSION\"/" homeassistant/rtltcp-server/config.yaml
+            cp CHANGELOG.md homeassistant/rtltcp-server/CHANGELOG.md
+            git add homeassistant/rtltcp-server
+            git diff --cached --quiet && { echo "Add-on already at $VERSION"; exit 0; }
+            git commit -m "chore: Home-Assistant-Add-on $VERSION [skip ci]"
+            git push origin main && exit 0
+            sleep 5
+          done
+          echo "::error::Could not push the add-on version"; exit 1

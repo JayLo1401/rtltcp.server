@@ -1,0 +1,34 @@
+[Unit]
+Description=rtltcp.server - rtl_tcp server for RTL-SDR sticks
+Documentation=https://github.com/JayLo1401/rtltcp.server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=notify
+User=rtltcp
+Group=rtltcp
+SupplementaryGroups=plugdev
+# Ports chosen during installation (RTLTCP_WEB_PORT, RTLTCP_STREAM_PORT)
+EnvironmentFile=-/etc/default/rtltcp-server
+Environment=DOTNET_BUNDLE_EXTRACT_BASE_DIR=/var/lib/rtltcp-server/.cache
+ExecStart=/opt/rtltcp-server/rtltcp-server --data /var/lib/rtltcp-server
+StateDirectory=rtltcp-server
+StateDirectoryMode=0700
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=15
+
+# Hardening (USB access via /dev/bus/usb + udev rule, group plugdev)
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+
+[Install]
+WantedBy=multi-user.target

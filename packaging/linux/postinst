@@ -1,0 +1,38 @@
+#!/bin/sh
+set -e
+
+if [ "$1" = "configure" ]; then
+    getent group plugdev >/dev/null || groupadd --system plugdev
+    if ! getent passwd rtltcp >/dev/null; then
+        useradd --system --user-group --home-dir /var/lib/rtltcp-server --no-create-home \
+            --shell /usr/sbin/nologin --comment "rtltcp.server" rtltcp
+    fi
+    usermod -aG plugdev rtltcp || true
+
+    # USB permissions for sticks that are already plugged in
+    if command -v udevadm >/dev/null 2>&1; then
+        udevadm control --reload-rules || true
+        udevadm trigger --subsystem-match=usb --action=add || true
+    fi
+    # Release sticks the DVB driver grabbed before the blacklist existed
+    for m in rtl2832_sdr dvb_usb_rtl28xxu rtl2832 rtl2830; do
+        modprobe -r "$m" 2>/dev/null || true
+    done
+
+    if [ -d /run/systemd/system ]; then
+        systemctl daemon-reload
+        systemctl enable rtltcp-server.service >/dev/null 2>&1 || true
+        # Update requests from the web interface / automatic update (root unit, see update.sh)
+        systemctl enable --now rtltcp-server-update.path >/dev/null 2>&1 || true
+        systemctl restart rtltcp-server.service || true
+    fi
+
+    WEB_PORT=8080
+    [ -r /etc/default/rtltcp-server ] && . /etc/default/rtltcp-server && WEB_PORT="${RTLTCP_WEB_PORT:-8080}"
+    HOST="$(hostname -I 2>/dev/null | awk '{print $1}')"
+    echo ""
+    echo "rtltcp.server läuft. Weboberfläche: http://${HOST:-<server>}:${WEB_PORT}/"
+    echo "Erste Anmeldung: admin / admin (danach eigenes Passwort festlegen)."
+fi
+
+exit 0

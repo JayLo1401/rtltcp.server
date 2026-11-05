@@ -7,18 +7,15 @@
   <!--
     libusb (LGPL-2.1) stays a separate, replaceable file next to the program - never embedded
     into a single-file bundle. See THIRD-PARTY-NOTICES.md.
-    Without RuntimeIdentifier: all Windows variants under runtimes/, picked at runtime.
-    With RuntimeIdentifier win-*: only the matching DLL, directly next to the exe.
+    Development builds (no RuntimeIdentifier): all Windows variants under runtimes/, picked at runtime.
+    Release builds: RtlTcp.Server.csproj copies only the DLL for its RuntimeIdentifier (the RID does not
+    flow into referenced library projects), so nothing from here goes into a publish folder.
   -->
-  <ItemGroup Condition="'$(RuntimeIdentifier)' == ''">
-    <None Include="runtimes\**\libusb-1.0.dll" CopyToOutputDirectory="PreserveNewest" Link="runtimes\%(RecursiveDir)%(Filename)%(Extension)" />
-  </ItemGroup>
-  <ItemGroup Condition="$(RuntimeIdentifier.StartsWith('win-'))">
-    <None Include="runtimes\$(RuntimeIdentifier)\native\libusb-1.0.dll" CopyToOutputDirectory="PreserveNewest"
-          Link="libusb-1.0.dll" ExcludeFromSingleFile="true" />
-  </ItemGroup>
   <ItemGroup>
-    <None Include="runtimes\LIBUSB-COPYING.txt" CopyToOutputDirectory="PreserveNewest" Link="LIBUSB-COPYING.txt" />
+    <None Include="runtimes\**\libusb-1.0.dll" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="Never"
+          Link="runtimes\%(RecursiveDir)%(Filename)%(Extension)" />
+    <None Include="runtimes\LIBUSB-COPYING.txt" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="Never"
+          Link="LIBUSB-COPYING.txt" />
   </ItemGroup>
 
 </Project>
