@@ -1,0 +1,13 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/RtlTcp.Core/RtlTcp.Core.csproj" />
+    <Project Path="src/RtlTcp.Server/RtlTcp.Server.csproj" />
+    <Project Path="src/RtlTcp.Usb.LibUsb/RtlTcp.Usb.LibUsb.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/RtlTcp.Core.Tests/RtlTcp.Core.Tests.csproj" />
+  </Folder>
+  <Folder Name="/tools/">
+    <Project Path="tools/RtlTcp.Probe/RtlTcp.Probe.csproj" />
+  </Folder>
+</Solution>
