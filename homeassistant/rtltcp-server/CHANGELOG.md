@@ -4,6 +4,14 @@ Alle nennenswerten Änderungen je Version. Format angelehnt an [Keep a Changelog
 
 ## [Unreleased]
 
+### Geändert
+
+- Windows: Die Deinstallation fragt, ob auch Einstellungen, Benutzer und Protokolle gelöscht werden sollen
+  (Standard: behalten; still mit `/DELETEDATA`). Bei einer Neuinstallation mit vorhandenen Daten sagt die
+  Abschlussseite jetzt, dass Einstellungen und Login übernommen wurden, statt `admin` / `admin` anzuzeigen.
+
+## [1.1.0] – 2026-11-06
+
 ### Neu
 
 - Windows: Tray-Symbol (`rtltcp-tray.exe`) zeigt, ob der Server läuft (grau = beendet, Warnsymbol = Stick fehlt),
