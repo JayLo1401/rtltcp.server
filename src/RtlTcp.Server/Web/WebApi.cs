@@ -35,6 +35,9 @@ public static class WebApi
 
     public sealed record UpdateSettingsDto(bool AutoUpdate, string Time);
 
+    public sealed record TrayDeviceDto(string Name, int Port, string State, string Message, string? Client);
+    public sealed record TrayDto(string Version, List<TrayDeviceDto> Devices);
+
     private static UpdateDto ToDto(UpdateService u, ServerConfigHolder cfg) =>
         new(u.Mode.ToString().ToLowerInvariant(), u.CurrentVersion, u.Latest?.Version, u.UpdateAvailable, u.CanInstall,
             u.LastCheck, u.State, u.Message, cfg.Current.Update.AutoUpdate, cfg.Current.Update.Time);
@@ -86,6 +89,23 @@ public static class WebApi
         {
             await ctx.SignOutAsync(CookieAuthenticationDefaults.AuthenticationScheme);
             return Results.Ok();
+        });
+
+        // Windows tray icon (rtltcp-tray.exe): short status without login, only from this computer.
+        api.MapGet("/tray", (HttpContext ctx, StreamHostService host, ServerConfigHolder cfg) =>
+        {
+            var remote = ClientIp(ctx);
+            var local = ctx.Connection.LocalIpAddress is { } l && l.IsIPv4MappedToIPv6 ? l.MapToIPv4() : ctx.Connection.LocalIpAddress;
+            if (!IPAddress.IsLoopback(remote) && !remote.Equals(local)) return Results.NotFound();
+            var managers = host.Managers.ToDictionary(m => m.Config.Port);
+            var devices = cfg.Current.Devices.Where(d => d.Enabled).Select(d =>
+            {
+                managers.TryGetValue(d.Port, out var m);
+                host.StartErrors.TryGetValue(d.Port, out var error);
+                return new TrayDeviceDto(d.Name, d.Port, m is null ? "error" : m.State.ToString().ToLowerInvariant(),
+                    m?.StateMessage ?? error ?? "Nicht gestartet", m?.Owner?.RemoteAddress);
+            }).ToList();
+            return Results.Ok(new TrayDto(StreamHostService.Version, devices));
         });
 
         var admin = api.MapGroup("").RequireAuthorization();

@@ -15,6 +15,7 @@
 
 #define ServiceName "rtltcp.server"
 #define FirewallRule "rtltcp.server"
+#define TrayRunValue "rtltcp.server Tray"
 
 [Setup]
 AppId={{B7E2B0A4-5C1E-4C55-9A7E-6E1F2A1D7C31}
@@ -54,6 +55,8 @@ de.StreamPort=Port für den ersten Stick (rtl_tcp):
 de.PortInvalid=Bitte gültige Ports (1–65535) eingeben, die sich unterscheiden.
 de.PortBusy=Port %1 ist bereits belegt. Bitte einen anderen wählen.
 de.OpenWeb=Weboberfläche öffnen
+de.TrayTask=Tray-Symbol beim Anmelden anzeigen (Status, Weboberfläche, Neustart)
+de.TrayIcon=rtltcp.server Tray-Symbol
 de.Finished=rtltcp.server läuft als Windows-Dienst.%n%nWeboberfläche: http://localhost:%1/%nErste Anmeldung: admin / admin (danach eigenes Passwort festlegen).%n%nWichtig: Der RTL-SDR-Stick braucht einmalig den WinUSB-Treiber. Dazu Zadig (zadig.akeo.ie) starten, „Options → List All Devices“, den Stick („Bulk-In, Interface 0“ bzw. „RTL2832U“) wählen und „WinUSB“ installieren.
 en.PortsTitle=Ports
 en.PortsSubtitle=Which ports should rtltcp.server use?
@@ -63,7 +66,12 @@ en.StreamPort=Port of the first stick (rtl_tcp):
 en.PortInvalid=Please enter valid, different ports (1–65535).
 en.PortBusy=Port %1 is already in use. Please choose another one.
 en.OpenWeb=Open web interface
+en.TrayTask=Show tray icon at logon (status, web interface, restart)
+en.TrayIcon=rtltcp.server tray icon
 en.Finished=rtltcp.server is running as a Windows service.%n%nWeb interface: http://localhost:%1/%nFirst login: admin / admin (you will be asked to set your own password).%n%nImportant: the RTL-SDR stick needs the WinUSB driver once. Run Zadig (zadig.akeo.ie), "Options → List All Devices", select the stick ("Bulk-In, Interface 0" or "RTL2832U") and install "WinUSB".
+
+[Tasks]
+Name: "tray"; Description: "{cm:TrayTask}"
 
 [Files]
 Source: "{#PublishDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs
@@ -75,17 +83,25 @@ Filename: "{app}\rtltcp.server.url"; Section: "InternetShortcut"; Key: "URL"; St
 
 [Icons]
 Name: "{autoprograms}\rtltcp.server"; Filename: "{app}\rtltcp.server.url"; IconFilename: "{app}\rtltcp-server.exe"
+Name: "{autoprograms}\{cm:TrayIcon}"; Filename: "{app}\rtltcp-tray.exe"
+
+; Tray icon for every user at logon (the task's checkbox decides; see CurStepChanged for unticking it later)
+[Registry]
+Root: HKLM; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: string; ValueName: "{#TrayRunValue}"; ValueData: """{app}\rtltcp-tray.exe"""; Flags: uninsdeletevalue; Tasks: tray
 
 [Run]
+Filename: "{app}\rtltcp-tray.exe"; Flags: nowait runasoriginaluser skipifsilent; Tasks: tray
 Filename: "http://localhost:{code:GetWebPort}/"; Description: "{cm:OpenWeb}"; Flags: postinstall shellexec nowait skipifsilent
 
 [UninstallRun]
+Filename: "{sys}\taskkill.exe"; Parameters: "/F /IM rtltcp-tray.exe"; Flags: runhidden waituntilterminated; RunOnceId: "StopTray"
 Filename: "{sys}\net.exe"; Parameters: "stop {#ServiceName}"; Flags: runhidden waituntilterminated; RunOnceId: "StopService"
 Filename: "{sys}\sc.exe"; Parameters: "delete {#ServiceName}"; Flags: runhidden waituntilterminated; RunOnceId: "DeleteService"
 Filename: "{sys}\netsh.exe"; Parameters: "advfirewall firewall delete rule name=""{#FirewallRule}"""; Flags: runhidden waituntilterminated; RunOnceId: "DeleteFirewall"
 
 [UninstallDelete]
 Type: files; Name: "{app}\rtltcp.server.url"
+Type: files; Name: "{app}\rtltcp-tray.exe.old*"
 
 [Code]
 var
@@ -194,10 +210,33 @@ begin
   end;
 end;
 
+// A running tray icon (possibly in several user sessions) locks rtltcp-tray.exe. A running exe can be
+// renamed though: move it aside, the new file goes into place, and every tray notices the new file and
+// restarts itself from it (also after silent automatic updates, which can't start programs for users).
+procedure MoveRunningTray();
+var
+  Exe, Old: String;
+  I: Integer;
+begin
+  Exe := ExpandConstant('{app}\rtltcp-tray.exe');
+  if not FileExists(Exe) then exit;
+  for I := 0 to 9 do
+  begin
+    Old := Exe + '.old' + IntToStr(I);
+    if FileExists(Old) then DeleteFile(Old); // fails while an older tray still runs from it
+    if not FileExists(Old) then
+    begin
+      RenameFile(Exe, Old);
+      exit;
+    end;
+  end;
+end;
+
 // Update: stop the running service before files are replaced.
 function PrepareToInstall(var NeedsRestart: Boolean): String;
 begin
   if ServiceExists() then Run(ExpandConstant('{sys}\net.exe'), 'stop {#ServiceName}');
+  MoveRunningTray();
   Result := '';
 end;
 
@@ -224,6 +263,10 @@ begin
   Run(ExpandConstant('{sys}\netsh.exe'), 'advfirewall firewall add rule name="{#FirewallRule}" dir=in action=allow protocol=TCP program="' + Exe + '" enable=yes profile=private,domain');
 
   Run(ExpandConstant('{sys}\net.exe'), 'start {#ServiceName}');
+
+  // Tray checkbox unticked on a later update: [Registry] only adds, so remove the autostart here.
+  if not WizardIsTaskSelected('tray') then
+    RegDeleteValue(HKLM, 'Software\Microsoft\Windows\CurrentVersion\Run', '{#TrayRunValue}');
 end;
 
 procedure CurPageChanged(CurPageID: Integer);

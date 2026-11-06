@@ -2,6 +2,7 @@
   <Folder Name="/src/">
     <Project Path="src/RtlTcp.Core/RtlTcp.Core.csproj" />
     <Project Path="src/RtlTcp.Server/RtlTcp.Server.csproj" />
+    <Project Path="src/RtlTcp.Tray/RtlTcp.Tray.csproj" />
     <Project Path="src/RtlTcp.Usb.LibUsb/RtlTcp.Usb.LibUsb.csproj" />
   </Folder>
   <Folder Name="/tests/">

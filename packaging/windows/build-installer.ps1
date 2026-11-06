@@ -23,7 +23,10 @@ $output = Join-Path $here 'output'
 Remove-Item $publish, $output -Recurse -Force -ErrorAction SilentlyContinue
 dotnet publish (Join-Path $root 'src\RtlTcp.Server') -c Release -r win-x64 "-p:Version=$Version" -o $publish
 if ($LASTEXITCODE -ne 0) { throw "dotnet publish failed ($LASTEXITCODE)" }
-foreach ($f in 'rtltcp-server.exe', 'libusb-1.0.dll') {
+# Tray icon (separate small WinExe, no console window at logon)
+dotnet publish (Join-Path $root 'src\RtlTcp.Tray') -c Release -r win-x64 "-p:Version=$Version" -o $publish
+if ($LASTEXITCODE -ne 0) { throw "dotnet publish (tray) failed ($LASTEXITCODE)" }
+foreach ($f in 'rtltcp-server.exe', 'rtltcp-tray.exe', 'libusb-1.0.dll') {
     if (-not (Test-Path (Join-Path $publish $f))) { throw "$f missing in publish output" }
 }
 
