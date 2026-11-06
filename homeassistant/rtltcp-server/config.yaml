@@ -1,7 +1,7 @@
 # Home Assistant add-on. The version is bumped by the release workflow after each release
 # (the Dockerfile downloads exactly this version from repository.jaycloud.at).
 name: rtltcp.server
-version: "1.0.1"
+version: "1.1.0"
 slug: rtltcp_server
 # Prebuilt by the release workflow (job "homeassistant"): Home Assistant downloads instead of building
 image: ghcr.io/jaylo1401/{arch}-addon-rtltcp_server
