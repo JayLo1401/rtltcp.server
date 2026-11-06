@@ -121,10 +121,14 @@ public static class WebSetup
         {
             var h = ctx.Response.Headers;
             h["X-Content-Type-Options"] = "nosniff";
-            h["X-Frame-Options"] = "DENY";
+            // Home Assistant shows the ingress page in an iframe of its own (same) origin: allow exactly that,
+            // everything else must not be framed (clickjacking).
+            var ingress = IsIngress(ctx);
+            h["X-Frame-Options"] = ingress ? "SAMEORIGIN" : "DENY";
             h["Referrer-Policy"] = "no-referrer";
             h["Content-Security-Policy"] =
-                "default-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'";
+                "default-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'self'; frame-ancestors "
+                + (ingress ? "'self'" : "'none'") + "; base-uri 'none'; form-action 'self'";
 
             // CSRF: state-changing API calls must carry our header (a cross-site form cannot set it).
             if (ctx.Request.Path.StartsWithSegments("/api") && !HttpMethods.IsGet(ctx.Request.Method)
