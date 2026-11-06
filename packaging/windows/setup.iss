@@ -57,6 +57,8 @@ de.PortBusy=Port %1 ist bereits belegt. Bitte einen anderen wählen.
 de.OpenWeb=Weboberfläche öffnen
 de.TrayTask=Tray-Symbol beim Anmelden anzeigen (Status, Weboberfläche, Neustart)
 de.TrayIcon=rtltcp.server Tray-Symbol
+de.FinishedExisting=rtltcp.server läuft als Windows-Dienst.%n%nWeboberfläche: http://localhost:%1/%n%nDie vorhandenen Einstellungen und Benutzer aus %2 wurden übernommen, die Anmeldung ist dieselbe wie bisher.%nPasswort vergessen? Als Administrator „rtltcp-server admin reset“ im Installationsordner ausführen.
+de.DeleteData=Sollen auch die Einstellungen, Benutzer und Protokolle gelöscht werden?%n%n%1%n%nBei „Nein“ bleiben sie für eine spätere Neuinstallation erhalten.
 de.Finished=rtltcp.server läuft als Windows-Dienst.%n%nWeboberfläche: http://localhost:%1/%nErste Anmeldung: admin / admin (danach eigenes Passwort festlegen).%n%nWichtig: Der RTL-SDR-Stick braucht einmalig den WinUSB-Treiber. Dazu Zadig (zadig.akeo.ie) starten, „Options → List All Devices“, den Stick („Bulk-In, Interface 0“ bzw. „RTL2832U“) wählen und „WinUSB“ installieren.
 en.PortsTitle=Ports
 en.PortsSubtitle=Which ports should rtltcp.server use?
@@ -68,6 +70,8 @@ en.PortBusy=Port %1 is already in use. Please choose another one.
 en.OpenWeb=Open web interface
 en.TrayTask=Show tray icon at logon (status, web interface, restart)
 en.TrayIcon=rtltcp.server tray icon
+en.FinishedExisting=rtltcp.server is running as a Windows service.%n%nWeb interface: http://localhost:%1/%n%nThe existing settings and users from %2 were kept, the login is the same as before.%nForgot the password? Run "rtltcp-server admin reset" in the installation folder as administrator.
+en.DeleteData=Also delete the settings, users and logs?%n%n%1%n%nChoose "No" to keep them for a later reinstallation.
 en.Finished=rtltcp.server is running as a Windows service.%n%nWeb interface: http://localhost:%1/%nFirst login: admin / admin (you will be asked to set your own password).%n%nImportant: the RTL-SDR stick needs the WinUSB driver once. Run Zadig (zadig.akeo.ie), "Options → List All Devices", select the stick ("Bulk-In, Interface 0" or "RTL2832U") and install "WinUSB".
 
 [Tasks]
@@ -271,6 +275,24 @@ end;
 
 procedure CurPageChanged(CurPageID: Integer);
 begin
-  if CurPageID = wpFinished then
-    WizardForm.FinishedLabel.Caption := FmtMessage(CustomMessage('Finished'), [GetWebPort('')]);
+  if CurPageID <> wpFinished then exit;
+  if IsFreshInstall() then
+    WizardForm.FinishedLabel.Caption := FmtMessage(CustomMessage('Finished'), [GetWebPort('')])
+  else
+    WizardForm.FinishedLabel.Caption := FmtMessage(CustomMessage('FinishedExisting'), [GetWebPort(''), DataDir()]);
+end;
+
+// Uninstall: settings, users and logs are kept by default (reinstall / update keeps working).
+// Interactive uninstall asks; silent uninstall deletes only with /DELETEDATA.
+procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
+var
+  Purge: Boolean;
+begin
+  if CurUninstallStep <> usPostUninstall then exit;
+  if not DirExists(DataDir()) then exit;
+  if UninstallSilent() then
+    Purge := Pos('/DELETEDATA', Uppercase(GetCmdTail())) > 0
+  else
+    Purge := MsgBox(FmtMessage(CustomMessage('DeleteData'), [DataDir()]), mbConfirmation, MB_YESNO or MB_DEFBUTTON2) = IDYES;
+  if Purge then DelTree(DataDir(), True, True, True);
 end;
