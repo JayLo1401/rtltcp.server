@@ -1,0 +1,10 @@
+configuration:
+  web_port:
+    name: Port der Weboberfläche
+    description: >-
+      Direkter Zugriff auf die Weboberfläche unter http://<home-assistant>:<port>/ mit eigenem Login.
+      Leer lassen, wenn die Weboberfläche nur über Home Assistant (Seitenleiste) erreichbar sein soll.
+  stream_port:
+    name: Port des ersten Sticks
+    description: >-
+      Wird nur beim allerersten Start verwendet. Danach werden die Ports in der Weboberfläche unter „Geräte“ geändert.

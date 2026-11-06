@@ -66,8 +66,14 @@ builder.AddWeb(config);
 
 var app = builder.Build();
 app.UseWeb();
-app.Logger.LogInformation("Web GUI on http://{Bind}:{Port}/{Ingress}", config.Current.Web.Bind, WebSetup.WebPort(config),
-    WebSetup.IngressEnabled ? " (Home Assistant ingress enabled)" : "");
+if (WebSetup.SkippedPortWarning is { } skipped)
+    app.Logger.LogError("{Message}", skipped);
+else if (WebSetup.WebPort(config) > 0)
+    app.Logger.LogInformation("Web GUI on http://{Bind}:{Port}/", config.Current.Web.Bind, WebSetup.WebPort(config));
+if (WebSetup.IngressPort > 0)
+    app.Logger.LogInformation("Home Assistant ingress on port {Port}", WebSetup.IngressPort);
+else if (WebSetup.IngressEnabled)
+    app.Logger.LogInformation("Home Assistant ingress enabled");
 if (defaultAdminCreated)
     app.Logger.LogWarning("First start: web login is admin / admin - the password must be changed at the first login");
 await app.RunAsync();

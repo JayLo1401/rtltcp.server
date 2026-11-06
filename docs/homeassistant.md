@@ -3,11 +3,11 @@
 Es gibt zwei Wege. Welcher passt, hängt davon ab, wie Home Assistant installiert ist
 (**Einstellungen → System → Info → Installationsart**).
 
-| Installationsart                          | Weg                                      |
-|-------------------------------------------|------------------------------------------|
-| Home Assistant OS (übliches Pi-Image)     | **Add-on** (unten)                       |
-| Supervised                                | **Add-on** (unten)                       |
-| Container (Docker) oder Core              | **Direkt installieren** wie unter Linux  |
+| Installationsart                      | Weg                                     |
+|---------------------------------------|-----------------------------------------|
+| Home Assistant OS (übliches Pi-Image) | **Add-on** (unten)                      |
+| Supervised                            | **Add-on** (unten)                      |
+| Container (Docker) oder Core          | **Direkt installieren** wie unter Linux |
 
 ## Als Add-on (Home Assistant OS / Supervised)
 
@@ -35,7 +35,11 @@ Port `1234` eintragen.
 - Ein Stick kann nur von einem Programm benutzt werden. Nutzt schon ein anderes Add-on den Stick
   (rtl_433, RTLSDR-Airband …), braucht rtltcp.server einen eigenen.
 - Die Weboberfläche ist zusätzlich unter `http://<home-assistant>:8099/` erreichbar. Dort gilt der eigene
-  Login (`admin` / `admin`, danach eigenes Passwort).
+  Login (`admin` / `admin`, danach eigenes Passwort). Den Port ändert man im Reiter **Konfiguration** des Add-ons
+  (`web_port`). Leer bedeutet: nur über Home Assistant. Der Zugang über die Seitenleiste nutzt einen Port, den
+  Home Assistant selbst frei wählt, und kollidiert daher nicht mit anderen Add-ons.
+- `stream_port` (Standard 1234) legt den Port des ersten Sticks beim allerersten Start fest. Später werden die
+  Ports in der Weboberfläche unter **Geräte** geändert.
 - Die Einstellungen sind Teil der Home-Assistant-Backups.
 
 ## Direkt installieren (Container / Core auf Raspberry Pi OS, Debian, Ubuntu)
@@ -51,9 +55,9 @@ einen systemd-Dienst ein. Danach `http://<rechner>:8080/` öffnen, Anmeldung `ad
 
 ## Fehlersuche
 
-| Problem                                   | Lösung                                                                 |
-|-------------------------------------------|------------------------------------------------------------------------|
-| Status „Stick nicht bereit“               | Stick neu anstecken. Prüfen, ob ein anderes Add-on ihn belegt.          |
-| Add-on startet nicht, Port belegt         | Ein anderes Programm nutzt 1234 oder 8099. Im Add-on-Protokoll nachsehen. |
-| Client bekommt „Server already in use“    | Ein anderer Client ist verbunden. Unter **Status** trennen.            |
-| Kein Ton / Rauschen bei starkem Sender    | Unter **Geräte** einen festen Gain einstellen (z. B. 14,4 dB).          |
+| Problem                                   | Lösung                                                                                                                                       |
+|-------------------------------------------|----------------------------------------------------------------------------------------------------------------------------------------------|
+| Status „Stick nicht bereit“               | Stick neu anstecken. Prüfen, ob ein anderes Add-on ihn belegt.                                                                               |
+| Port belegt (Hinweis im Add-on-Protokoll) | Web-Port: im Reiter **Konfiguration** einen anderen `web_port` wählen oder leeren. Stick-Port: in der Weboberfläche unter **Geräte** ändern. |
+| Client bekommt „Server already in use“    | Ein anderer Client ist verbunden. Unter **Status** trennen.                                                                                  |
+| Kein Ton / Rauschen bei starkem Sender    | Unter **Geräte** einen festen Gain einstellen (z. B. 14,4 dB).                                                                               |

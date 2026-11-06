@@ -1,0 +1,10 @@
+configuration:
+  web_port:
+    name: Web interface port
+    description: >-
+      Direct access to the web interface at http://<home-assistant>:<port>/ with its own login.
+      Leave empty to reach the web interface only through Home Assistant (sidebar).
+  stream_port:
+    name: Port of the first stick
+    description: >-
+      Only used on the very first start. Afterwards change the ports in the web interface under "Geräte".

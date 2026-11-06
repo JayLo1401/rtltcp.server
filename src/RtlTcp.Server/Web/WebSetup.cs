@@ -13,9 +13,52 @@ public static class WebSetup
     /// <summary>Set by the Home Assistant add-on (RTLTCP_INGRESS=1).</summary>
     public static bool IngressEnabled { get; } = Environment.GetEnvironmentVariable("RTLTCP_INGRESS") == "1";
 
-    /// <summary>Web port: RTLTCP_WEB_PORT (add-on) overrides config.json.</summary>
-    public static int WebPort(ServerConfigHolder config) =>
-        int.TryParse(Environment.GetEnvironmentVariable("RTLTCP_WEB_PORT"), out var p) && p is > 0 and < 65536 ? p : config.Current.Web.Port;
+    /// <summary>
+    /// Web port for direct access: RTLTCP_WEB_PORT (installer / add-on) overrides config.json.
+    /// The add-on sets it to "0" (or leaves the option empty) for "only via Home Assistant": then 0 is returned.
+    /// </summary>
+    public static int WebPort(ServerConfigHolder config)
+    {
+        if (!int.TryParse(Environment.GetEnvironmentVariable("RTLTCP_WEB_PORT"), out var p) || p is < 0 or > 65535)
+            return config.Current.Web.Port;
+        if (p == 0) return IngressPort > 0 ? 0 : config.Current.Web.Port; // without ingress the GUI must stay reachable
+        return p;
+    }
+
+    /// <summary>Home Assistant ingress port (RTLTCP_INGRESS_PORT, chosen freely by the Supervisor), 0 = none.</summary>
+    public static int IngressPort { get; } =
+        IngressEnabled && int.TryParse(Environment.GetEnvironmentVariable("RTLTCP_INGRESS_PORT"), out var p) && p is > 0 and < 65536 ? p : 0;
+
+    /// <summary>All ports the web GUI listens on (stick ports must not use any of them).</summary>
+    public static IReadOnlySet<int> WebPorts(ServerConfigHolder config)
+    {
+        var ports = new HashSet<int>();
+        if (WebPort(config) is > 0 and var w) ports.Add(w);
+        if (IngressPort > 0) ports.Add(IngressPort);
+        return ports;
+    }
+
+    /// <summary>Set when the direct web port was busy and skipped (only possible next to the ingress port).</summary>
+    public static string? SkippedPortWarning { get; private set; }
+
+    private static bool PortFree(IPAddress addr, int port)
+    {
+        try
+        {
+            // Same kind of socket as Kestrel's ListenAnyIP: IPv6 any, dual mode.
+            var any = addr.Equals(IPAddress.Any) || addr.Equals(IPAddress.IPv6Any);
+            using var s = new System.Net.Sockets.Socket(any ? System.Net.Sockets.AddressFamily.InterNetworkV6 : addr.AddressFamily,
+                System.Net.Sockets.SocketType.Stream, System.Net.Sockets.ProtocolType.Tcp);
+            if (any) s.DualMode = true;
+            s.Bind(new IPEndPoint(any ? IPAddress.IPv6Any : addr, port));
+            s.Listen(1);
+            return true;
+        }
+        catch (System.Net.Sockets.SocketException)
+        {
+            return false;
+        }
+    }
 
     public static bool IsIngress(HttpContext ctx)
     {
@@ -27,12 +70,25 @@ public static class WebSetup
     public static void AddWeb(this WebApplicationBuilder builder, ServerConfigHolder config)
     {
         var web = config.Current.Web;
-        var port = WebPort(config);
+        var addr = IPAddress.Parse(web.Bind);
+        var any = addr.Equals(IPAddress.Any) || addr.Equals(IPAddress.IPv6Any);
+        var direct = WebPort(config);
+        // Next to the ingress port, a busy direct port must not take the whole add-on down:
+        // the web GUI stays reachable through Home Assistant and the log says what happened.
+        if (direct > 0 && IngressPort > 0 && direct != IngressPort && !PortFree(addr, direct))
+        {
+            SkippedPortWarning = $"Port {direct} is already in use - web GUI only via Home Assistant. Choose another 'web_port' in the add-on configuration.";
+            direct = 0;
+        }
         builder.WebHost.ConfigureKestrel(k =>
         {
-            var addr = IPAddress.Parse(web.Bind);
-            if (addr.Equals(IPAddress.Any) || addr.Equals(IPAddress.IPv6Any)) k.ListenAnyIP(port);
-            else k.Listen(addr, port);
+            if (direct > 0)
+            {
+                if (any) k.ListenAnyIP(direct);
+                else k.Listen(addr, direct);
+            }
+            // The Supervisor's ingress proxy reaches the add-on over the hassio network, so listen on all addresses.
+            if (IngressPort > 0 && IngressPort != direct) k.ListenAnyIP(IngressPort);
         });
 
         // Cookie encryption keys survive restarts (otherwise every restart logs everybody out).

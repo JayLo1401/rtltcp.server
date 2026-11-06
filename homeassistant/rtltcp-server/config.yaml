@@ -16,8 +16,17 @@ init: false
 host_network: true
 usb: true
 udev: true
-# Web interface in the Home Assistant sidebar (HA does the login)
+# Web interface in the Home Assistant sidebar (HA does the login).
+# Port 0: the Supervisor picks a free port (host network!), run.sh passes it on - no port conflicts.
 ingress: true
-ingress_port: 8099
+ingress_port: 0
 panel_icon: mdi:radio-tower
 panel_title: rtltcp.server
+# web_port: direct access to the web interface (own login), empty = only via Home Assistant.
+# stream_port: port of the first stick, only used on the very first start (later: web interface → Geräte).
+options:
+  web_port: 8099
+  stream_port: 1234
+schema:
+  web_port: port?
+  stream_port: port

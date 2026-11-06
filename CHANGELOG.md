@@ -2,6 +2,20 @@
 
 Alle nennenswerten Änderungen je Version. Format angelehnt an [Keep a Changelog](https://keepachangelog.com/de/1.1.0/), Versionsnummern nach [Semantic Versioning](https://semver.org/lang/de/).
 
+## [Unreleased]
+
+### Behoben
+
+- Home Assistant: Das Add-on startete nicht, wenn Port 8080 belegt war (#1). Die Einstellungen aus dem Dockerfile
+  kamen beim Programm nicht an, deshalb lief die Weboberfläche auf dem Standardport 8080 statt auf 8099.
+
+### Geändert
+
+- Home Assistant: Der Zugang über die Seitenleiste nutzt jetzt einen Port, den Home Assistant frei wählt. Es gibt
+  keine Kollision mehr mit anderen Add-ons.
+- Home Assistant: neue Optionen `web_port` (direkter Zugriff, leer = nur über Home Assistant) und `stream_port`
+  (erster Stick beim ersten Start). Ist `web_port` belegt, startet das Add-on trotzdem und meldet das im Protokoll.
+
 ## [1.0.0] – 2026-11-05
 
 Erste veröffentlichte Version. Lizenz [PolyForm Noncommercial 1.0.0](LICENSE.md): frei für private und

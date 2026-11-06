@@ -22,6 +22,17 @@ Im Client (z. B. SDR++ → Quelle „RTL-TCP“) die Adresse des Home-Assistant-
 Die Weboberfläche ist zusätzlich direkt unter `http://<home-assistant>:8099/` erreichbar. Dort gilt der eigene
 Login: beim ersten Mal `admin` / `admin`, danach muss ein eigenes Passwort gesetzt werden.
 
+## Konfiguration (Reiter „Konfiguration“ des Add-ons)
+
+| Option        | Standard | Bedeutung                                                                           |
+|---------------|----------|-------------------------------------------------------------------------------------|
+| `web_port`    | `8099`   | Port für den direkten Zugriff auf die Weboberfläche, leer = nur über Home Assistant |
+| `stream_port` | `1234`   | Port des ersten Sticks, nur beim allerersten Start (später unter **Geräte**)        |
+
+Der Zugang über die Seitenleiste nutzt einen Port, den Home Assistant selbst frei wählt. Er kann also nicht mit
+anderen Add-ons kollidieren. Ist `web_port` belegt, startet das Add-on trotzdem: Im Protokoll steht ein Hinweis, und
+die Weboberfläche bleibt über die Seitenleiste erreichbar. Dann einen anderen Port eintragen oder das Feld leeren.
+
 ## Hinweise
 
 - Ein Stick kann nur von **einem** Programm benutzt werden. Läuft bereits ein anderes Add-on mit demselben Stick

@@ -27,11 +27,7 @@ RUN set -eu; \
     rm /tmp/rtltcp.tar.gz; \
     /opt/rtltcp-server/rtltcp-server --version
 
-# Web interface on the ingress port; requests from the HA ingress proxy count as logged in
-ENV RTLTCP_INGRESS=1 \
-    RTLTCP_WEB_PORT=8099 \
-    DOTNET_BUNDLE_EXTRACT_BASE_DIR=/data/.cache
-
+# Ports and environment are set in run.sh (from the add-on options and the Supervisor's ingress port)
 COPY run.sh /
 RUN chmod a+x /run.sh
 CMD [ "/run.sh" ]

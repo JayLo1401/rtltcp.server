@@ -161,7 +161,7 @@ public static class WebApi
 
         admin.MapPut("/devices", async (HttpContext ctx, List<DeviceConfig> devices, ServerConfigHolder cfg, StreamHostService host) =>
         {
-            if (ValidateDevices(devices, WebSetup.WebPort(cfg)) is { } error) return Problem(error);
+            if (ValidateDevices(devices, WebSetup.WebPorts(cfg)) is { } error) return Problem(error);
             cfg.Update(c => c.Devices = devices);
             log.LogInformation("{Admin} saved {Count} device(s), restarting stream servers", Who(ctx), devices.Count);
             await host.ReloadAsync();
@@ -298,13 +298,13 @@ public static class WebApi
         return new AccessPolicy(authEnabled: true, nets).IsTrusted(ip);
     }
 
-    private static string? ValidateDevices(List<DeviceConfig> devices, int webPort)
+    private static string? ValidateDevices(List<DeviceConfig> devices, IReadOnlySet<int> webPorts)
     {
         foreach (var d in devices)
         {
             if (string.IsNullOrWhiteSpace(d.Name)) return "Jedes Gerät braucht einen Namen";
             if (d.Port is < 1 or > 65535) return $"{d.Name}: ungültiger Port {d.Port}";
-            if (d.Port == webPort) return $"{d.Name}: Port {d.Port} wird von der Weboberfläche verwendet";
+            if (webPorts.Contains(d.Port)) return $"{d.Name}: Port {d.Port} wird von der Weboberfläche verwendet";
             if (!IPAddress.TryParse(d.Bind, out _)) return $"{d.Name}: ungültige Adresse {d.Bind}";
             if (d.IdleTimeoutSeconds < 0) return $"{d.Name}: Leerlaufzeit darf nicht negativ sein";
             if (d.V1WaitForDeviceSeconds is < 0 or > 300) return $"{d.Name}: Wartezeit 0–300 s";
