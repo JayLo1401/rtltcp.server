@@ -4,6 +4,21 @@ Alle nennenswerten Änderungen je Version. Format angelehnt an [Keep a Changelog
 
 ## [Unreleased]
 
+### Neu
+
+- Windows: Tray-Symbol (`rtltcp-tray.exe`) zeigt, ob der Server läuft (grau = beendet, Warnsymbol = Stick fehlt),
+  mit Tooltip pro Stick. Menü: Weboberfläche öffnen (auch per Doppelklick), Server neu starten, beenden oder
+  starten (mit UAC-Abfrage), Tray-Symbol schließen. Startet bei jeder Anmeldung, abwählbar im Installer. Nach
+  Updates startet es sich selbst neu (#7).
+- Home Assistant: Das Add-on wird als fertiges Image von `ghcr.io` geladen statt auf dem Gerät gebaut.
+
+### Behoben
+
+- Home Assistant: Die Weboberfläche in der Seitenleiste wurde vom Browser blockiert (`ERR_BLOCKED_BY_RESPONSE`).
+  Über den Ingress-Proxy darf sie jetzt von Home Assistant (gleiche Adresse) eingebettet werden.
+
+## [1.0.1] – 2026-11-06
+
 ### Behoben
 
 - Home Assistant: Das Add-on startete nicht, wenn Port 8080 belegt war (#1). Die Einstellungen aus dem Dockerfile

@@ -3,6 +3,8 @@
 name: rtltcp.server
 version: "1.0.1"
 slug: rtltcp_server
+# Prebuilt by the release workflow (job "homeassistant"): Home Assistant downloads instead of building
+image: ghcr.io/jaylo1401/{arch}-addon-rtltcp_server
 description: rtl_tcp-Server für RTL-SDR-Sticks – Weboberfläche, Auto-Reconnect, rtltcp_v2
 url: https://github.com/JayLo1401/rtltcp.server
 arch:

@@ -19,8 +19,8 @@ Es gibt zwei Wege. Welcher passt, hängt davon ab, wie Home Assistant installier
    ```
 
 3. Den Store neu laden (⋮ → **Nach Updates suchen**). Unten erscheint **rtltcp.server (jaycloud)**.
-4. **rtltcp.server** öffnen → **Installieren**. Home Assistant baut das Add-on dabei auf dem Gerät. Es lädt
-   das fertige Programm von `repository.jaycloud.at`, das dauert ein bis zwei Minuten.
+4. **rtltcp.server** öffnen → **Installieren**. Home Assistant lädt das fertige Image von `ghcr.io`, auf dem
+   Gerät wird nichts gebaut.
 5. Optional **In Seitenleiste anzeigen** einschalten, dann **Starten**.
 6. **Weboberfläche öffnen**. Die Anmeldung übernimmt Home Assistant. Unter **Status** sollte der Stick
    erscheinen, der erste auf Port **1234**.

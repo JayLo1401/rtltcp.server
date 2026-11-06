@@ -25,7 +25,8 @@ RUN set -eu; \
     mkdir -p /opt/rtltcp-server; \
     tar -xzf /tmp/rtltcp.tar.gz -C /opt/rtltcp-server; \
     rm /tmp/rtltcp.tar.gz; \
-    /opt/rtltcp-server/rtltcp-server --version
+    test -x /opt/rtltcp-server/rtltcp-server
+# (not executed here: images for ARM are built under QEMU emulation, where .NET is unreliable)
 
 # Ports and environment are set in run.sh (from the add-on options and the Supervisor's ingress port)
 COPY run.sh /
