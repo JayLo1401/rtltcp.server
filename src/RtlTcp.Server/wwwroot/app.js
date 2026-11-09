@@ -266,10 +266,14 @@ async function renderStatus() {
 // ------------------------------------------------------------------ devices
 
 async function renderDevices() {
-  let devices, status;
+  let devices, status, instances;
   try {
-    [devices, status] = await Promise.all([api('GET', '/devices'), api('GET', '/status')]);
+    let inst;
+    [devices, status, inst] = await Promise.all([api('GET', '/devices'), api('GET', '/status'), api('GET', '/remote/instances')]);
+    instances = inst.instances;
   } catch (e) { if (e.status !== 401) setPage(h('div', { class: 'notice err', text: e.message })); return; }
+  const INST_LABEL = { connecting: 'verbindet …', disconnected: 'getrennt', disabled: 'deaktiviert', revoked: 'widerrufen', stopped: 'gestoppt' };
+  for (const d of devices) if (d.remote && d.remote.instance === undefined) d.remote.instance = '';
 
   const sticks = status.sticks.filter((s) => s.serial);
   const list = h('div');
@@ -285,12 +289,50 @@ async function renderDevices() {
     draw();
   };
   const addRemote = () => {
+    const first = instances.find((i) => i.state === 'connected') || instances[0];
     devices.push({
       serial: '', name: 'Entfernter Stick', enabled: true, bind: '0.0.0.0', port: nextPort(), idleTimeoutSeconds: 30, v1WaitForDeviceSeconds: 10,
       defaults: { frequency: 100000000, sampleRate: 2048000, gain: null, ppm: 0, biasTee: false },
-      remote: { host: '', port: 4433, fingerprint: '', share: '' },
+      remote: { instance: first ? first.id : '', host: '', port: 4433, fingerprint: '', share: '' },
     });
     draw();
+  };
+
+  // remote stick: from an instance on rtl.over.internet, or direct (test mode, fixed address)
+  const remoteEditor = (d) => {
+    const box = h('div');
+    const render = () => {
+      const r = d.remote;
+      const mode = h('select', { onchange: (e) => { r.instance = e.target.value; r.share = ''; render(); } },
+        instances.map((i) => h('option', { value: i.id, text: `Instanz ${i.name || i.url}` })),
+        h('option', { value: '', text: 'Direkt (Testbetrieb, feste Adresse)' }));
+      mode.value = r.instance || '';
+      let body;
+      if (r.instance) {
+        const i = instances.find((x) => x.id === r.instance);
+        const shares = (i ? i.shares : []).filter((s) => !s.own);
+        const pick = h('select', { onchange: (e) => {
+          r.share = e.target.value;
+          const s = shares.find((x) => x.shareId === r.share);
+          if (s && (!d.name || d.name === 'Entfernter Stick')) { d.name = `${s.name} @ ${s.provider}`; draw(); }
+        } },
+        h('option', { value: '', text: shares.length ? 'Stick auswählen …' : 'In dieser Instanz ist nichts freigegeben' }),
+        shares.map((s) => h('option', { value: s.shareId, text: `${s.name} @ ${s.provider}${s.online ? '' : ' (offline)'}` })));
+        if (r.share && !shares.some((s) => s.shareId === r.share)) pick.append(h('option', { value: r.share, text: `${r.share} (derzeit nicht freigegeben)` }));
+        pick.value = r.share;
+        body = h('div', { class: 'form-grid' }, field('Quelle', mode), field('Freigegebener Stick', pick, i && i.state !== 'connected' ? `Instanz ${INST_LABEL[i.state] || i.state}` : 'Liste kommt von rtl.over.internet'));
+      } else {
+        body = h('div', { class: 'form-grid' },
+          field('Quelle', mode),
+          field('Server', h('input', { type: 'text', value: r.host, oninput: (e) => { r.host = e.target.value.trim(); } }), 'IP oder Name des teilenden rtltcp.server'),
+          field('UDP-Port', num(r.port, (v) => { r.port = v; }, { min: 1, max: 65535 }), 'dort unter Einstellungen'),
+          field('Fingerprint', h('input', { type: 'text', value: r.fingerprint, spellcheck: 'false', oninput: (e) => { r.fingerprint = e.target.value.trim(); } }), 'steht unten auf dessen Statusseite'),
+          field('Seriennummer dort', h('input', { type: 'text', value: r.share, oninput: (e) => { r.share = e.target.value.trim(); } })));
+      }
+      fill(box, h('h3', { text: 'Entfernter Stick', class: 'section-title' }), body);
+    };
+    render();
+    return box;
   };
 
   const num =(value, set, attrs) => h('input', { type: 'number', value, ...attrs, oninput: (e) => set(e.target.value === '' ? 0 : Number(e.target.value)) });
@@ -322,13 +364,7 @@ async function renderDevices() {
         field('Adresse', h('input', { type: 'text', value: d.bind, oninput: (e) => { d.bind = e.target.value.trim(); } }), '0.0.0.0 = alle Netzwerkkarten'),
         field('Stick abschalten nach', num(d.idleTimeoutSeconds, (v) => { d.idleTimeoutSeconds = v; }, { min: 0 }), 'Sekunden ohne Client, 0 = immer an'),
         field('v1-Client wartet auf Stick', num(d.v1WaitForDeviceSeconds, (v) => { d.v1WaitForDeviceSeconds = v; }, { min: 0, max: 300 }), 'Sekunden, danach wird getrennt')),
-      d.remote ? [
-        h('h3', { text: 'Entfernter Stick (Testbetrieb)', class: 'section-title' }),
-        h('div', { class: 'form-grid' },
-          field('Server', h('input', { type: 'text', value: d.remote.host, oninput: (e) => { d.remote.host = e.target.value.trim(); } }), 'IP oder Name des teilenden rtltcp.server'),
-          field('UDP-Port', num(d.remote.port, (v) => { d.remote.port = v; }, { min: 1, max: 65535 }), 'dort unter Einstellungen'),
-          field('Fingerprint', h('input', { type: 'text', value: d.remote.fingerprint, spellcheck: 'false', oninput: (e) => { d.remote.fingerprint = e.target.value.trim(); } }), 'steht unten auf dessen Statusseite'),
-          field('Seriennummer dort', h('input', { type: 'text', value: d.remote.share, oninput: (e) => { d.remote.share = e.target.value.trim(); } })))] : null,
+      d.remote ? remoteEditor(d) : null,
       h('h3', { text: 'Standardwerte bei jeder neuen Verbindung', class: 'section-title' }),
       h('div', { class: 'form-grid' },
         field('Frequenz (MHz)', h('input', {
@@ -603,14 +639,72 @@ function updateCard(u) {
 // ------------------------------------------------------------------ settings
 
 async function renderSettings() {
-  let auth, logging, update, remote, status, devices;
+  let auth, logging, update, remote, status, devices, inst;
   try {
-    [auth, logging, update, remote, status, devices] = await Promise.all([api('GET', '/settings/auth'), api('GET', '/settings/logging'),
-      api('GET', '/update'), api('GET', '/settings/remote'), api('GET', '/status'), api('GET', '/devices')]);
+    [auth, logging, update, remote, status, devices, inst] = await Promise.all([api('GET', '/settings/auth'), api('GET', '/settings/logging'),
+      api('GET', '/update'), api('GET', '/settings/remote'), api('GET', '/status'), api('GET', '/devices'), api('GET', '/remote/instances')]);
   } catch (e) { if (e.status !== 401) setPage(h('div', { class: 'notice err', text: e.message })); return; }
 
-  // ---- sharing over the internet (test mode: peers entered by hand)
+  // ---- instances on rtl.over.internet
   const usbSticks = devices.filter((d) => !d.remote && d.serial);
+  const INST_STATE = { connected: ['ok', 'verbunden'], connecting: ['', 'verbinde …'], disconnected: ['warn', 'getrennt'],
+    disabled: ['warn', 'deaktiviert'], revoked: ['err', 'widerrufen'], stopped: ['', 'gestoppt'] };
+  const instCard = (i) => {
+    const [cls, label] = INST_STATE[i.state] || ['', i.state];
+    const shared = new Set(i.devices);
+    const save = h('button', { class: 'btn small primary', type: 'button', text: 'Freigaben speichern', onclick: (e) => guarded(e.target, async () => {
+      await api('PUT', `/remote/instances/${i.id}`, { enabled: i.enabled, devices: [...shared] });
+      toast('Gespeichert – Stream-Server neu gestartet');
+      renderSettings();
+    }) });
+    const others = i.shares.filter((s) => !s.own);
+    return h('div', { class: 'peer' },
+      h('div', { class: 'card-head' },
+        h('h3', {}, i.name || i.url, h('small', { text: i.url })),
+        h('span', { class: 'badge ' + cls, text: label })),
+      i.message ? h('p', { class: 'muted', text: i.message }) : null,
+      h('p', { class: 'muted', text: 'In dieser Instanz freigeben:' }),
+      h('div', { class: 'buttons' },
+        usbSticks.length ? usbSticks.map((d) => switchEl(shared.has(d.serial), (v) => { if (v) shared.add(d.serial); else shared.delete(d.serial); },
+          `${d.name} (${d.serial})`)) : h('span', { class: 'muted', text: 'Keine Sticks mit Seriennummer eingetragen.' })),
+      h('p', { class: 'muted' }, 'Von anderen freigegeben: ',
+        others.length ? others.map((s) => `${s.name} @ ${s.provider}${s.online ? '' : ' (offline)'}`).join(', ') : 'nichts',
+        others.length ? ' – unter Geräte → „+ Entfernter Stick“ einbinden' : null),
+      h('div', { class: 'buttons' }, save,
+        h('button', { class: 'btn small danger', type: 'button', text: 'Instanz entfernen', onclick: (e) => {
+          if (!confirm(`Instanz „${i.name}“ entfernen? Freigaben und entfernte Sticks daraus funktionieren dann nicht mehr.`)) return;
+          guarded(e.target, async () => { await api('DELETE', `/remote/instances/${i.id}`); toast('Entfernt'); renderSettings(); });
+        } })));
+  };
+  const enUrl = h('input', { type: 'url', value: 'https://rtl.jaycloud.at', required: true });
+  const enCode = h('input', { type: 'text', placeholder: 'K7QM-4XPD', required: true, autocomplete: 'off' });
+  const enUser = h('input', { type: 'text', required: true, autocomplete: 'off' });
+  const enPw = h('input', { type: 'password', required: true, autocomplete: 'new-password' });
+  const enBtn = h('button', { class: 'btn primary', type: 'submit', text: 'Instanz hinzufügen' });
+  const srvName = h('input', { type: 'text', value: remote.serverName, placeholder: inst.serverName, maxlength: 64 });
+  const instForm = h('form', {
+    class: 'card',
+    onsubmit: (e) => {
+      e.preventDefault();
+      guarded(enBtn, async () => {
+        await api('PUT', '/settings/remote', { ...remote, serverName: srvName.value.trim() });
+        await api('POST', '/remote/instances', { url: enUrl.value.trim(), code: enCode.value, user: enUser.value, password: enPw.value });
+        toast('Instanz hinzugefügt');
+        renderSettings();
+      });
+    },
+  },
+  h('div', { class: 'card-head' }, h('h3', { text: 'Sticks teilen über rtl.over.internet' })),
+  h('p', { class: 'muted', text: 'Ohne VPN und ohne Portfreigabe: rtl.over.internet vermittelt nur, der Stream läuft direkt zwischen den Servern. Code, Benutzer und Passwort der Instanz bekommst du vom Betreiber; gespeichert wird nur ein Token.' }),
+  inst.unavailable ? h('div', { class: 'notice err', text: inst.unavailable }) : null,
+  inst.instances.map(instCard),
+  h('h3', { class: 'section-title', text: 'Instanz hinzufügen' }),
+  h('div', { class: 'form-grid' },
+    field('Adresse', enUrl), field('Instanz-Code', enCode), field('Benutzer', enUser), field('Passwort', enPw),
+    field('Name dieses Servers', srvName, 'sehen die anderen Standorte, leer = Computername')),
+  h('div', { class: 'buttons' }, enBtn));
+
+  // ---- sharing over the internet (test mode: peers entered by hand)
   const peerList = h('div');
   const peerCard = (p, i) => h('div', { class: 'peer' },
     h('div', { class: 'form-grid' },
@@ -631,13 +725,13 @@ async function renderSettings() {
     onsubmit: (e) => {
       e.preventDefault();
       guarded(saveRemote, async () => {
-        await api('PUT', '/settings/remote', { listenPort: Number(udpPort.value), bind: remote.bind, peers: remote.peers });
+        await api('PUT', '/settings/remote', { listenPort: Number(udpPort.value), bind: remote.bind, peers: remote.peers, serverName: remote.serverName });
         toast('Gespeichert – Stream-Server neu gestartet');
         renderSettings();
       });
     },
   },
-  h('div', { class: 'card-head' }, h('h3', { text: 'Sticks teilen über das Internet (Testbetrieb)' })),
+  h('div', { class: 'card-head' }, h('h3', { text: 'Direkt teilen ohne rtl.over.internet (Testbetrieb)' })),
   h('p', { class: 'muted' }, 'Fingerprint dieses Servers: ',
     h('code', { text: status.remote.fingerprint || '–' }),
     status.remote.listen ? ` · aktiv auf UDP ${status.remote.listen}` : null,
@@ -708,7 +802,7 @@ async function renderSettings() {
     field('Aktuelles Passwort', cur), field('Neues Passwort', pw, 'mindestens 8 Zeichen'), field('Wiederholen', pw2)),
   h('div', { class: 'buttons' }, savePw));
 
-  setPage(h('div', { class: 'page-head' }, h('h1', { text: 'Einstellungen' })), updateCard(update), authForm, remoteForm, logForm,
+  setPage(h('div', { class: 'page-head' }, h('h1', { text: 'Einstellungen' })), updateCard(update), authForm, instForm, remoteForm, logForm,
     session.ingress ? null : pwForm);
 }
 

@@ -20,7 +20,7 @@ public sealed class StreamHostService(ServerConfigHolder config, UserStore users
     private List<(DeviceManager Manager, StreamServer Server)> _devices = [];
     private LibUsbBackend? _usb;
     private RtlSdrDeviceSource? _source;
-    private readonly RemoteSharing _remote = new(config.DataDir, loggers.CreateLogger("remote"));
+    private readonly RemoteSharing _remote = new(config.DataDir, loggers);
 
     /// <summary>Sharing sticks between sites (QUIC): own fingerprint, availability, listener state.</summary>
     public RemoteSharing Remote => _remote;
@@ -86,15 +86,12 @@ public sealed class StreamHostService(ServerConfigHolder config, UserStore users
         }
         _devices = started;
         StartErrors = errors;
-        await _remote.StartShareHostAsync(cfg.Remote, users, Version,
-            share => _devices.Select(d => d.Manager).FirstOrDefault(m => m.Config.Remote is null &&
-                (string.Equals(m.Config.Serial, share, StringComparison.OrdinalIgnoreCase) ||
-                 string.Equals(m.OpenSerial, share, StringComparison.OrdinalIgnoreCase))));
+        await _remote.StartAsync(cfg, users, Version, [.. started.Select(d => d.Item1)]);
     }
 
     private async Task StopDevicesAsync()
     {
-        await _remote.StopShareHostAsync();
+        await _remote.StopAsync();
         var devices = _devices;
         _devices = [];
         foreach (var (manager, server) in devices)

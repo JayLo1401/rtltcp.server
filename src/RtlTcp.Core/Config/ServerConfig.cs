@@ -106,6 +106,26 @@ public sealed class RemoteConfig
     public int ListenPort { get; set; }
     public string Bind { get; set; } = "::";
     public List<RemotePeerConfig> Peers { get; set; } = [];
+
+    /// <summary>Name shown to other sites (rtl.over.internet); empty = computer name.</summary>
+    public string ServerName { get; set; } = "";
+
+    /// <summary>Instances on rtl.over.internet this server is enrolled in (token stored separately).</summary>
+    public List<InstanceConfig> Instances { get; set; } = [];
+}
+
+/// <summary>Enrollment in one instance on rtl.over.internet. The device token lives in remote/tokens.json.</summary>
+public sealed class InstanceConfig
+{
+    /// <summary>Local id (also key of the token).</summary>
+    public string Id { get; set; } = "";
+    public string Url { get; set; } = "https://rtl.jaycloud.at";
+    public string Name { get; set; } = "";
+    public int DeviceId { get; set; }
+    public bool Enabled { get; set; } = true;
+
+    /// <summary>Serials of our sticks shared in this instance.</summary>
+    public List<string> Devices { get; set; } = [];
 }
 
 /// <summary>Another rtltcp.server allowed to use some of our sticks, identified by its certificate fingerprint.</summary>
@@ -123,6 +143,13 @@ public sealed class RemotePeerConfig
 /// <summary>Where a remote stick lives (Standort 2, user side).</summary>
 public sealed class RemoteDeviceConfig
 {
+    /// <summary>
+    /// Set: the stick is shared in this instance (<see cref="InstanceConfig.Id"/>) and <see cref="Share"/> is the
+    /// broker's share_id ("&lt;provider&gt;:&lt;serial&gt;"); host, port and fingerprint are not used.
+    /// Empty: test mode with a fixed address.
+    /// </summary>
+    public string Instance { get; set; } = "";
+
     /// <summary>Host name or IP of the providing rtltcp.server.</summary>
     public string Host { get; set; } = "";
 

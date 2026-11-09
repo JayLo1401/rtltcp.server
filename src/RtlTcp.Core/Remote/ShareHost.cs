@@ -3,6 +3,7 @@ using System.Net;
 using System.Net.Quic;
 using System.Net.Security;
 using System.Runtime.Versioning;
+using System.Security.Cryptography.X509Certificates;
 using Microsoft.Extensions.Logging;
 using RtlTcp.Core.Auth;
 using RtlTcp.Core.Config;
@@ -29,7 +30,7 @@ public sealed class ShareHost : IAsyncDisposable
 
     private readonly IPEndPoint _endPoint;
     private readonly PeerIdentity _identity;
-    private readonly Func<IReadOnlyList<RemotePeerConfig>> _peers;
+    private readonly Func<X509Certificate, PeerGrant?> _authorize;
     private readonly Func<string, DeviceManager?> _findDevice;
     private readonly IStreamUserStore _users;
     private readonly string _version;
@@ -39,14 +40,26 @@ public sealed class ShareHost : IAsyncDisposable
     private QuicListener? _listener;
     private Task? _accept;
 
-    /// <param name="peers">Read per connection, so changes apply to the next connection.</param>
-    /// <param name="findDevice">Running stick by serial (share id).</param>
+    /// <summary>A peer allowed by its certificate: display name and which sticks (serials) it may use.</summary>
+    public sealed record PeerGrant(string Name, Func<string, bool> MayUse);
+
+    /// <summary>Manually configured peers (test mode), read per connection so changes apply immediately.</summary>
     public ShareHost(IPEndPoint endPoint, PeerIdentity identity, Func<IReadOnlyList<RemotePeerConfig>> peers,
+        Func<string, DeviceManager?> findDevice, IStreamUserStore users, string version, ILogger log)
+        : this(endPoint, identity, cert => peers().FirstOrDefault(p => RemoteProtocol.FingerprintMatches(cert, p.Fingerprint)) is { } p
+            ? new PeerGrant(p.Name, s => p.Devices.Contains(s, StringComparer.OrdinalIgnoreCase)) : null,
+            findDevice, users, version, log)
+    {
+    }
+
+    /// <param name="authorize">Decides per peer certificate; null = refused in the TLS handshake.</param>
+    /// <param name="findDevice">Running stick by serial (share id).</param>
+    public ShareHost(IPEndPoint endPoint, PeerIdentity identity, Func<X509Certificate, PeerGrant?> authorize,
         Func<string, DeviceManager?> findDevice, IStreamUserStore users, string version, ILogger log)
     {
         _endPoint = endPoint;
         _identity = identity;
-        _peers = peers;
+        _authorize = authorize;
         _findDevice = findDevice;
         _users = users;
         _version = version;
@@ -54,6 +67,14 @@ public sealed class ShareHost : IAsyncDisposable
     }
 
     public IPEndPoint? LocalEndPoint => _listener?.LocalEndPoint;
+
+    /// <summary>Called when a peer connection ends (broker sessions end then).</summary>
+    public event Action? ConnectionClosed;
+
+    /// <summary>Number of peer connections currently open.</summary>
+    public int Connections => Volatile.Read(ref _connections);
+
+    private int _connections;
 
     public async Task StartAsync()
     {
@@ -74,7 +95,7 @@ public sealed class ShareHost : IAsyncDisposable
                     ApplicationProtocols = [RemoteProtocol.Alpn],
                     ServerCertificate = _identity.Certificate,
                     ClientCertificateRequired = true,
-                    RemoteCertificateValidationCallback = (_, cert, _, _) => cert is not null && FindPeer(cert) is not null,
+                    RemoteCertificateValidationCallback = (_, cert, _, _) => cert is not null && _authorize(cert) is not null,
                 },
             }),
         }, _cts.Token);
@@ -82,9 +103,6 @@ public sealed class ShareHost : IAsyncDisposable
             _listener.LocalEndPoint, _identity.Fingerprint);
         _accept = AcceptLoopAsync(_cts.Token);
     }
-
-    private RemotePeerConfig? FindPeer(System.Security.Cryptography.X509Certificates.X509Certificate cert) =>
-        _peers().FirstOrDefault(p => RemoteProtocol.FingerprintMatches(cert, p.Fingerprint));
 
     private void Track(Task task)
     {
@@ -116,7 +134,7 @@ public sealed class ShareHost : IAsyncDisposable
     private async Task ServeConnectionAsync(QuicConnection conn, CancellationToken ct)
     {
         await using var _ = conn;
-        var peer = conn.RemoteCertificate is { } cert ? FindPeer(cert) : null;
+        var peer = conn.RemoteCertificate is { } cert ? _authorize(cert) : null;
         var ip = conn.RemoteEndPoint.Address;
         var ipText = (ip.IsIPv4MappedToIPv6 ? ip.MapToIPv4() : ip).ToString();
         if (peer is null)
@@ -125,6 +143,7 @@ public sealed class ShareHost : IAsyncDisposable
             return;
         }
         var who = $"{peer.Name} ({ipText})";
+        Interlocked.Increment(ref _connections);
         _log.LogInformation("Remote sharing: {Peer} connected", who);
         var streams = new List<Task>();
         try
@@ -139,11 +158,13 @@ public sealed class ShareHost : IAsyncDisposable
         finally
         {
             await Task.WhenAll(streams);
+            Interlocked.Decrement(ref _connections);
             _log.LogInformation("Remote sharing: {Peer} disconnected", who);
+            ConnectionClosed?.Invoke();
         }
     }
 
-    private async Task ServeStreamAsync(QuicStream stream, RemotePeerConfig peer, IPAddress ip, string who, CancellationToken ct)
+    private async Task ServeStreamAsync(QuicStream stream, PeerGrant peer, IPAddress ip, string who, CancellationToken ct)
     {
         await using var _ = stream;
         try
@@ -155,7 +176,7 @@ public sealed class ShareHost : IAsyncDisposable
                 share = await RemoteProtocol.ReadSharePreambleAsync(stream, t.Token);
             }
 
-            var manager = peer.Devices.Contains(share, StringComparer.OrdinalIgnoreCase) ? _findDevice(share) : null;
+            var manager = peer.MayUse(share) ? _findDevice(share) : null;
             if (manager is null)
             {
                 _log.LogInformation("Remote sharing: {Peer} asked for stick {Share}, which is not shared with it", who, share);

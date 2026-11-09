@@ -17,6 +17,13 @@
     <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
   </PropertyGroup>
 
+  <!-- The server runs on Windows, Linux and macOS only (QUIC for sharing over the internet is available there) -->
+  <ItemGroup>
+    <AssemblyAttribute Include="System.Runtime.Versioning.SupportedOSPlatformAttribute"><_Parameter1>windows</_Parameter1></AssemblyAttribute>
+    <AssemblyAttribute Include="System.Runtime.Versioning.SupportedOSPlatformAttribute"><_Parameter1>linux</_Parameter1></AssemblyAttribute>
+    <AssemblyAttribute Include="System.Runtime.Versioning.SupportedOSPlatformAttribute"><_Parameter1>macos</_Parameter1></AssemblyAttribute>
+  </ItemGroup>
+
   <ItemGroup>
     <ProjectReference Include="..\RtlTcp.Core\RtlTcp.Core.csproj" />
     <ProjectReference Include="..\RtlTcp.Usb.LibUsb\RtlTcp.Usb.LibUsb.csproj" />

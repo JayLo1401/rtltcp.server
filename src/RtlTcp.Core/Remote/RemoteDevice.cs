@@ -21,9 +21,15 @@ namespace RtlTcp.Core.Remote;
 [SupportedOSPlatform("windows")]
 [SupportedOSPlatform("linux")]
 [SupportedOSPlatform("macos")]
-public sealed class RemoteDeviceSource(RemoteDeviceConfig config, PeerIdentity identity, ILogger log) : ISdrDeviceSource
+public sealed class RemoteDeviceSource(IRemoteConnector connector, ILogger log) : ISdrDeviceSource
 {
-    /// <summary>Connect, handshake and wait for the remote stick to become ready (tests shorten it).</summary>
+    /// <summary>Manual test mode: fixed address and fingerprint from the device config.</summary>
+    public RemoteDeviceSource(RemoteDeviceConfig config, PeerIdentity identity, ILogger log)
+        : this(new DirectConnector(config, identity), log)
+    {
+    }
+
+    /// <summary>Extra time to wait for the remote stick after the connection is up (tests shorten it).</summary>
     internal static TimeSpan OpenTimeout { get; set; } = TimeSpan.FromSeconds(8);
 
     private static readonly TimeSpan MaxBackoff = TimeSpan.FromSeconds(30);
@@ -42,8 +48,8 @@ public sealed class RemoteDeviceSource(RemoteDeviceConfig config, PeerIdentity i
         if (Environment.TickCount64 < _nextAttempt) return null; // back off, keep LastError
         try
         {
-            using var cts = new CancellationTokenSource(OpenTimeout);
-            var device = RemoteDevice.OpenAsync(config, identity, log, cts.Token).GetAwaiter().GetResult();
+            using var cts = new CancellationTokenSource(OpenTimeout + connector.ConnectTimeout);
+            var device = RemoteDevice.OpenAsync(connector, log, cts.Token).GetAwaiter().GetResult();
             _failures = 0;
             LastError = null;
             return device;
@@ -62,7 +68,7 @@ public sealed class RemoteDeviceSource(RemoteDeviceConfig config, PeerIdentity i
             var delay = TimeSpan.FromSeconds(Math.Min(MaxBackoff.TotalSeconds, Math.Pow(2, Math.Min(_failures, 5))));
             _failures++;
             _nextAttempt = Environment.TickCount64 + (long)delay.TotalMilliseconds;
-            log.LogInformation("Remote stick {Share} at {Host}:{Port}: {Error}", config.Share, config.Host, config.Port, LastError);
+            log.LogInformation("Remote stick {Remote}: {Error}", connector.Describe, LastError);
             return null;
         }
     }
@@ -71,12 +77,70 @@ public sealed class RemoteDeviceSource(RemoteDeviceConfig config, PeerIdentity i
 /// <summary>The remote side answered but the stick cannot be used (busy, not shared, not ready …).</summary>
 public sealed class RemoteOpenException(string message) : Exception(message);
 
+/// <summary>Establishes the QUIC connection to the site that shares a stick.</summary>
+public interface IRemoteConnector
+{
+    /// <summary>Stick id (serial) at the provider, sent in the stream preamble.</summary>
+    string Share { get; }
+
+    /// <summary>For log messages.</summary>
+    string Describe { get; }
+
+    /// <summary>How long <see cref="ConnectAsync"/> may take.</summary>
+    TimeSpan ConnectTimeout { get; }
+
+    /// <exception cref="RemoteOpenException">The setup failed for a reason worth showing to the user.</exception>
+    Task<RemoteLink> ConnectAsync(CancellationToken ct);
+}
+
+/// <summary>A connection to the providing site; disposing it closes the connection and ends the session.</summary>
+[SupportedOSPlatform("windows")]
+[SupportedOSPlatform("linux")]
+[SupportedOSPlatform("macos")]
+public sealed class RemoteLink(QuicConnection connection, Func<ValueTask>? onClosed = null) : IAsyncDisposable
+{
+    private int _disposed;
+
+    public QuicConnection Connection { get; } = connection;
+
+    public async ValueTask DisposeAsync()
+    {
+        if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
+        try
+        {
+            await Connection.CloseAsync(RemoteProtocol.ErrorNone);
+        }
+        catch (Exception ex) when (ex is QuicException or ObjectDisposedException or OperationCanceledException) { }
+        await Connection.DisposeAsync();
+        if (onClosed is not null) await onClosed();
+    }
+}
+
+/// <summary>Test mode: provider address, port and fingerprint entered by hand.</summary>
+[SupportedOSPlatform("windows")]
+[SupportedOSPlatform("linux")]
+[SupportedOSPlatform("macos")]
+public sealed class DirectConnector(RemoteDeviceConfig config, PeerIdentity identity) : IRemoteConnector
+{
+    public string Share => config.Share;
+    public string Describe => $"{config.Share} at {config.Host}:{config.Port}";
+    public TimeSpan ConnectTimeout => TimeSpan.Zero;
+
+    public async Task<RemoteLink> ConnectAsync(CancellationToken ct)
+    {
+        EndPoint remote = IPAddress.TryParse(config.Host.Trim('[', ']'), out var ip)
+            ? new IPEndPoint(ip, config.Port) : new DnsEndPoint(config.Host, config.Port);
+        return new RemoteLink(await QuicConnection.ConnectAsync(
+            RemoteProtocol.ClientOptions(remote, null, identity, config.Fingerprint), ct));
+    }
+}
+
 [SupportedOSPlatform("windows")]
 [SupportedOSPlatform("linux")]
 [SupportedOSPlatform("macos")]
 internal sealed class RemoteDevice : ISdrDevice
 {
-    private readonly QuicConnection _conn;
+    private readonly RemoteLink _link;
     private readonly QuicStream _stream;
     private readonly ILogger _log;
     private readonly string _name;
@@ -86,9 +150,9 @@ internal sealed class RemoteDevice : ISdrDevice
     private volatile string? _deadReason;
     private int _disposed;
 
-    private RemoteDevice(QuicConnection conn, QuicStream stream, string serial, TunerInfo tuner, string name, ILogger log)
+    private RemoteDevice(RemoteLink link, QuicStream stream, string serial, TunerInfo tuner, string name, ILogger log)
     {
-        _conn = conn;
+        _link = link;
         _stream = stream;
         Serial = serial;
         TunerType = tuner.Type;
@@ -107,43 +171,24 @@ internal sealed class RemoteDevice : ISdrDevice
 
     // ---------------------------------------------------------------- open
 
-    public static async Task<RemoteDevice> OpenAsync(RemoteDeviceConfig config, PeerIdentity identity, ILogger log,
-        CancellationToken ct)
+    public static async Task<RemoteDevice> OpenAsync(IRemoteConnector connector, ILogger log, CancellationToken ct)
     {
-        EndPoint remote = IPAddress.TryParse(config.Host.Trim('[', ']'), out var ip)
-            ? new IPEndPoint(ip, config.Port) : new DnsEndPoint(config.Host, config.Port);
-        var conn = await QuicConnection.ConnectAsync(new QuicClientConnectionOptions
-        {
-            RemoteEndPoint = remote,
-            DefaultStreamErrorCode = RemoteProtocol.ErrorStreamAborted,
-            DefaultCloseErrorCode = RemoteProtocol.ErrorNone,
-            IdleTimeout = RemoteProtocol.IdleTimeout,
-            KeepAliveInterval = RemoteProtocol.KeepAlive,
-            MaxInboundBidirectionalStreams = 0,
-            MaxInboundUnidirectionalStreams = 0,
-            ClientAuthenticationOptions = new SslClientAuthenticationOptions
-            {
-                ApplicationProtocols = [RemoteProtocol.Alpn],
-                TargetHost = RemoteProtocol.TargetHost,
-                ClientCertificates = [identity.Certificate],
-                RemoteCertificateValidationCallback = (_, cert, _, _) =>
-                    RemoteProtocol.FingerprintMatches(cert, config.Fingerprint),
-            },
-        }, ct);
-
+        var link = await connector.ConnectAsync(ct);
+        var conn = link.Connection;
+        var share = connector.Share;
         QuicStream? stream = null;
         try
         {
             stream = await conn.OpenOutboundStreamAsync(QuicStreamType.Bidirectional, ct);
-            byte[] start = [.. RemoteProtocol.SharePreamble(config.Share), .. V2.Hello.ToArray()];
+            byte[] start = [.. RemoteProtocol.SharePreamble(share), .. V2.Hello.ToArray()];
             await stream.WriteAsync(start, ct);
 
             var header = new byte[V2.HeaderSize];
             await stream.ReadExactlyAsync(header, ct);
             V2.ReadHeader(header);
 
-            var name = config.Share;
-            var serial = config.Share;
+            var name = share;
+            var serial = share;
             string? lastStatus = null;
             while (true)
             {
@@ -170,8 +215,11 @@ internal sealed class RemoteDevice : ISdrDevice
                         if (info.Device.Serial.Length > 0) serial = info.Device.Serial;
                         break;
                     case StatusMessage { State: DeviceStates.Ready, Tuner: { } tuner }:
-                        log.LogInformation("Remote stick {Name} ({Serial}) at {Host} ready", name, serial, config.Host);
-                        return new RemoteDevice(conn, stream, serial, tuner, name, log);
+                        log.LogInformation("Remote stick {Name} ({Remote}) ready", name, connector.Describe);
+                        return new RemoteDevice(link, stream, serial, tuner, name, log);
+                    case StatusMessage { State: DeviceStates.DeviceNotReady or DeviceStates.DeviceLost } s:
+                        // no stick there right now: report at once, the source retries with backoff
+                        throw new RemoteOpenException($"Remote stick: {s.Message}");
                     case StatusMessage s:
                         lastStatus = s.Message;
                         break;
@@ -187,7 +235,7 @@ internal sealed class RemoteDevice : ISdrDevice
         catch
         {
             if (stream is not null) await stream.DisposeAsync();
-            await conn.DisposeAsync();
+            await link.DisposeAsync();
             throw;
         }
     }
@@ -313,8 +361,7 @@ internal sealed class RemoteDevice : ISdrDevice
             try
             {
                 await _stream.DisposeAsync();
-                await _conn.CloseAsync(RemoteProtocol.ErrorNone);
-                await _conn.DisposeAsync();
+                await _link.DisposeAsync();
             }
             catch (Exception ex) when (ex is QuicException or ObjectDisposedException or OperationCanceledException) { }
             finally

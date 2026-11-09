@@ -33,6 +33,14 @@ public static class WebApi
     /// <summary>Sharing between sites: own fingerprint (for the other side), listener, or why it is unavailable.</summary>
     public sealed record RemoteStatusDto(string? Fingerprint, string? Listen, string? Error);
 
+    public sealed record EnrollDto(string Url, string Code, string User, string Password);
+    public sealed record InstanceUpdateDto(bool Enabled, List<string> Devices);
+    public sealed record InstanceShareDto(string ShareId, string Provider, string StickId, string Name, string Tuner, string State,
+        bool Online, bool Own);
+    public sealed record InstanceDto(string Id, string Url, string Name, bool Enabled, List<string> Devices, string State,
+        string? Message, int DeviceId, List<InstanceShareDto> Shares);
+    public sealed record RemoteInstancesDto(string ServerName, string? Fingerprint, string? Unavailable, List<InstanceDto> Instances);
+
     public sealed record UpdateDto(string Mode, string Current, string? Latest, bool Available, bool CanInstall,
         DateTimeOffset? LastCheck, string State, string? Message, bool AutoUpdate, string Time);
 
@@ -164,7 +172,7 @@ public static class WebApi
             var sticks = host.ConnectedSticks().Where(s => s.Serial is not null)
                 .Select(s => new StickDto(s.Serial, KnownDevices.Name(s.VendorId, s.ProductId), s.Location, configured.Contains(s.Serial!)))
                 .ToList();
-            foreach (var m in host.Managers)
+            foreach (var m in host.Managers.Where(m => m.Config.Remote is null)) // remote sticks are not local USB sticks
                 if (m.OpenSerial is { } serial && sticks.All(s => s.Serial != serial))
                     sticks.Add(new StickDto(serial, "in Verwendung", "", configured.Contains(serial)));
             var r = host.Remote;
@@ -226,8 +234,82 @@ public static class WebApi
                     Devices = [.. p.Devices.Select(d => d.Trim()).Where(d => d.Length > 0).Distinct()],
                 });
             }
-            cfg.Update(c => c.Remote = new RemoteConfig { ListenPort = dto.ListenPort, Bind = dto.Bind, Peers = peers });
+            cfg.Update(c =>
+            {
+                c.Remote.ListenPort = dto.ListenPort;
+                c.Remote.Bind = dto.Bind;
+                c.Remote.Peers = peers;
+                c.Remote.ServerName = dto.ServerName.Trim();
+            });
             log.LogInformation("{Admin} saved remote sharing: udp port {Port}, {Count} peer(s)", Who(ctx), dto.ListenPort, peers.Count);
+            await host.ReloadAsync();
+            return Results.Ok();
+        });
+
+        // ---- instances on rtl.over.internet
+
+        admin.MapGet("/remote/instances", (ServerConfigHolder cfg, StreamHostService host) =>
+            new RemoteInstancesDto(RemoteSharing.ServerNameOf(cfg.Current.Remote), host.Remote.Fingerprint, host.Remote.Unavailable,
+                cfg.Current.Remote.Instances.Select(i =>
+                {
+                    var b = host.Remote.Broker(i.Id);
+                    return new InstanceDto(i.Id, i.Url, b?.InstanceName ?? i.Name, i.Enabled, i.Devices,
+                        !i.Enabled ? "disabled" : b is null ? "stopped" : b.State.ToString().ToLowerInvariant(),
+                        b?.Message, b?.DeviceId ?? i.DeviceId,
+                        b?.Shares.Select(s => new InstanceShareDto(s.ShareId, s.ProviderName, s.StickId, s.Name, s.Tuner, s.State,
+                            s.Online, s.ProviderId == (b.DeviceId ?? i.DeviceId))).ToList() ?? []);
+                }).ToList()));
+
+        admin.MapPost("/remote/instances", async (HttpContext ctx, EnrollDto dto, ServerConfigHolder cfg, StreamHostService host) =>
+        {
+            if (!Uri.TryCreate(dto.Url?.Trim(), UriKind.Absolute, out var url) || url.Scheme is not ("https" or "http"))
+                return Problem("Adresse bitte als https://…");
+            if (string.IsNullOrWhiteSpace(dto.Code) || string.IsNullOrWhiteSpace(dto.User) || string.IsNullOrEmpty(dto.Password))
+                return Problem("Code, Benutzer und Passwort angeben");
+            if (host.Remote.Unavailable is { } why) return Problem(why);
+            InstanceConfig inst;
+            try
+            {
+                inst = await host.Remote.EnrollAsync(url.ToString(), dto.Code.Trim(), dto.User.Trim(), dto.Password,
+                    RemoteSharing.ServerNameOf(cfg.Current.Remote), StreamHostService.Version, ctx.RequestAborted);
+            }
+            catch (RtlTcp.Core.Remote.Broker.EnrollException ex)
+            {
+                log.LogWarning("{Admin}: enrollment at {Url} failed: {Error}", Who(ctx), url, ex.Message);
+                return Problem(ex.Message);
+            }
+            cfg.Update(c =>
+            {
+                // the broker replaces the token of an earlier enrollment of this server in the same instance
+                c.Remote.Instances.RemoveAll(i => i.Url == inst.Url && i.DeviceId == inst.DeviceId);
+                c.Remote.Instances.Add(inst);
+            });
+            log.LogInformation("{Admin} added instance {Name} ({Url})", Who(ctx), inst.Name, inst.Url);
+            await host.ReloadAsync();
+            return Results.Ok();
+        });
+
+        admin.MapPut("/remote/instances/{id}", async (HttpContext ctx, string id, InstanceUpdateDto dto, ServerConfigHolder cfg, StreamHostService host) =>
+        {
+            if (cfg.Current.Remote.Instances.All(i => i.Id != id)) return Problem("Instanz nicht gefunden", 404);
+            cfg.Update(c =>
+            {
+                var i = c.Remote.Instances.First(x => x.Id == id);
+                i.Enabled = dto.Enabled;
+                i.Devices = [.. dto.Devices.Select(d => d.Trim()).Where(d => d.Length > 0).Distinct()];
+            });
+            log.LogInformation("{Admin} updated instance {Id}: {Count} stick(s) shared", Who(ctx), id, dto.Devices.Count);
+            await host.ReloadAsync();
+            return Results.Ok();
+        });
+
+        admin.MapDelete("/remote/instances/{id}", async (HttpContext ctx, string id, ServerConfigHolder cfg, StreamHostService host) =>
+        {
+            var inst = cfg.Current.Remote.Instances.FirstOrDefault(i => i.Id == id);
+            if (inst is null) return Problem("Instanz nicht gefunden", 404);
+            cfg.Update(c => c.Remote.Instances.RemoveAll(i => i.Id == id));
+            host.Remote.ForgetToken(id);
+            log.LogInformation("{Admin} removed instance {Name}", Who(ctx), inst.Name);
             await host.ReloadAsync();
             return Results.Ok();
         });
@@ -367,6 +449,11 @@ public static class WebApi
         foreach (var d in devices)
         {
             if (d.Remote is not { } r) continue;
+            if (r.Instance.Length > 0)
+            {
+                if (!r.Share.Contains(':')) return $"{d.Name}: bitte einen freigegebenen Stick der Instanz auswählen";
+                continue;
+            }
             if (string.IsNullOrWhiteSpace(r.Host)) return $"{d.Name}: Adresse des entfernten Servers fehlt";
             if (r.Port is < 1 or > 65535) return $"{d.Name}: ungültiger Port {r.Port} des entfernten Servers";
             if (RtlTcp.Core.Remote.RemoteProtocol.NormalizeFingerprint(r.Fingerprint).Length != 64)

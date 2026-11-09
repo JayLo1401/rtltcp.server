@@ -1,9 +1,16 @@
 # Sticks zwischen Standorten teilen
 
-Status: **Kern fertig, Testbetrieb ohne Vermittler.** Den Verbindungsaufbau über rtl.over.internet
-(Anmeldung, Hole-Punching, keine Portfreigabe) liefern JayLo1401/rtl.over.internet#4 sowie die Issues #2 und #3
-hier. Bis dahin werden Gegenstelle und Fingerprint von Hand in `config.json` eingetragen. Der Anbieter muss
-dann per UDP erreichbar sein, im LAN oder über IPv6.
+Zwei Wege:
+
+1. **Über rtl.over.internet** (der normale Weg): Unter Einstellungen → „Sticks teilen über rtl.over.internet“
+   meldet sich der Server mit Instanz-Code, Benutzer und Passwort an. Gespeichert wird nur das Geräte-Token
+   (`remote/tokens.json`, nur für den Besitzer lesbar). Pro Instanz wählt man die freigegebenen Sticks. Am anderen
+   Standort: Geräte → „+ Entfernter Stick“ → Quelle = die Instanz → Stick auswählen.
+   Pro Verbindung vermittelt rtl.over.internet eine Sitzung: Kandidaten sammeln (öffentliche IPv6 zuerst,
+   reflexive IPv4 über den Rendezvous-Endpunkt, LAN), Hole-Punching, dann QUIC direkt auf demselben UDP-Port.
+   Am Router wird nichts freigegeben. Ablauf und Pakete: `docs/protocol.md` in rtl.over.internet.
+2. **Direkt (Testbetrieb):** Gegenstelle, UDP-Port und Fingerprint von Hand (siehe unten). Der Anbieter muss
+   dann per UDP erreichbar sein, im LAN oder über IPv6.
 
 ## Prinzip
 

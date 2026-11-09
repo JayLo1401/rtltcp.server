@@ -29,6 +29,30 @@ public static class RemoteProtocol
 
     public const int MaxShareIdLength = 255;
 
+    /// <summary>QUIC client (user side). <paramref name="local"/>: the punched port, null = any.</summary>
+    [System.Runtime.Versioning.SupportedOSPlatform("windows")]
+    [System.Runtime.Versioning.SupportedOSPlatform("linux")]
+    [System.Runtime.Versioning.SupportedOSPlatform("macos")]
+    public static System.Net.Quic.QuicClientConnectionOptions ClientOptions(System.Net.EndPoint remote, System.Net.IPEndPoint? local,
+        PeerIdentity identity, string expectedFingerprint) => new()
+    {
+        RemoteEndPoint = remote,
+        LocalEndPoint = local,
+        DefaultStreamErrorCode = ErrorStreamAborted,
+        DefaultCloseErrorCode = ErrorNone,
+        IdleTimeout = IdleTimeout,
+        KeepAliveInterval = KeepAlive,
+        MaxInboundBidirectionalStreams = 0,
+        MaxInboundUnidirectionalStreams = 0,
+        ClientAuthenticationOptions = new SslClientAuthenticationOptions
+        {
+            ApplicationProtocols = [Alpn],
+            TargetHost = TargetHost,
+            ClientCertificates = [identity.Certificate],
+            RemoteCertificateValidationCallback = (_, cert, _, _) => FingerprintMatches(cert, expectedFingerprint),
+        },
+    };
+
     public static string FingerprintOf(X509Certificate certificate) =>
         string.Join(':', Convert.ToHexString(SHA256.HashData(certificate.GetRawCertData())).Chunk(2).Select(c => new string(c)));
 
