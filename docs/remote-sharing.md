@@ -3,7 +3,7 @@
 Zwei Wege:
 
 1. **Über rtl.over.internet** (der normale Weg): Unter Einstellungen → „Sticks teilen über rtl.over.internet“
-   meldet sich der Server mit Instanz-Code, Benutzer und Passwort an. Gespeichert wird nur das Geräte-Token
+   meldet sich der Server mit Instanz-Code und Passwort der Instanz an. Gespeichert wird nur das Geräte-Token
    (`remote/tokens.json`, nur für den Besitzer lesbar). Pro Instanz wählt man die freigegebenen Sticks. Am anderen
    Standort: Geräte → „+ Entfernter Stick“ → Quelle = die Instanz → Stick auswählen.
    Pro Verbindung vermittelt rtl.over.internet eine Sitzung: Kandidaten sammeln (öffentliche IPv6 zuerst,

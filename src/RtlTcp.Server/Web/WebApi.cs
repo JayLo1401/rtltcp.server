@@ -33,7 +33,7 @@ public static class WebApi
     /// <summary>Sharing between sites: own fingerprint (for the other side), listener, or why it is unavailable.</summary>
     public sealed record RemoteStatusDto(string? Fingerprint, string? Listen, string? Error);
 
-    public sealed record EnrollDto(string Url, string Code, string User, string Password);
+    public sealed record EnrollDto(string Url, string Code, string Password);
     public sealed record InstanceUpdateDto(bool Enabled, List<string> Devices);
     public sealed record InstanceShareDto(string ShareId, string Provider, string StickId, string Name, string Tuner, string State,
         bool Online, bool Own);
@@ -264,13 +264,13 @@ public static class WebApi
         {
             if (!Uri.TryCreate(dto.Url?.Trim(), UriKind.Absolute, out var url) || url.Scheme is not ("https" or "http"))
                 return Problem("Adresse bitte als https://…");
-            if (string.IsNullOrWhiteSpace(dto.Code) || string.IsNullOrWhiteSpace(dto.User) || string.IsNullOrEmpty(dto.Password))
-                return Problem("Code, Benutzer und Passwort angeben");
+            if (string.IsNullOrWhiteSpace(dto.Code) || string.IsNullOrEmpty(dto.Password))
+                return Problem("Instanz-Code und Passwort angeben");
             if (host.Remote.Unavailable is { } why) return Problem(why);
             InstanceConfig inst;
             try
             {
-                inst = await host.Remote.EnrollAsync(url.ToString(), dto.Code.Trim(), dto.User.Trim(), dto.Password,
+                inst = await host.Remote.EnrollAsync(url.ToString(), dto.Code.Trim(), dto.Password,
                     RemoteSharing.ServerNameOf(cfg.Current.Remote), StreamHostService.Version, ctx.RequestAborted);
             }
             catch (RtlTcp.Core.Remote.Broker.EnrollException ex)

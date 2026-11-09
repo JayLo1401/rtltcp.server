@@ -86,7 +86,8 @@ public sealed class BrokerClient : IAsyncDisposable
 
     // ---------------------------------------------------------------- enrollment
 
-    public static async Task<Enrollment> EnrollAsync(string url, string code, string user, string password,
+    /// <param name="password">Password of the instance (or the admin password of rtl.over.internet).</param>
+    public static async Task<Enrollment> EnrollAsync(string url, string code, string password,
         string serverId, string serverName, string version, CancellationToken ct)
     {
         using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(20) };
@@ -95,7 +96,7 @@ public sealed class BrokerClient : IAsyncDisposable
         {
             resp = await http.PostAsJsonAsync(new Uri(new Uri(url.TrimEnd('/') + "/"), "api/v1/enroll"), new
             {
-                instance_code = code, user, password, server_id = serverId, server_name = serverName, version,
+                instance_code = code, password, server_id = serverId, server_name = serverName, version,
             }, ct);
         }
         catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or UriFormatException)
@@ -110,7 +111,7 @@ public sealed class BrokerClient : IAsyncDisposable
                 body["instance"]?["name"]?.GetValue<string>() ?? "");
         throw new EnrollException((string?)body?["error"] switch
         {
-            "INVALID_CREDENTIALS" => "Code, Benutzer oder Passwort falsch",
+            "INVALID_CREDENTIALS" => "Code oder Passwort falsch",
             "INSTANCE_DISABLED" => "Die Instanz ist deaktiviert",
             "RATE_LIMITED" => $"Zu viele Versuche, bitte in {(int?)body?["retry_after"] ?? 600} s erneut versuchen",
             { } e => $"Anmeldung abgelehnt: {e}",

@@ -678,7 +678,6 @@ async function renderSettings() {
   };
   const enUrl = h('input', { type: 'url', value: 'https://rtl.jaycloud.at', required: true });
   const enCode = h('input', { type: 'text', placeholder: 'K7QM-4XPD', required: true, autocomplete: 'off' });
-  const enUser = h('input', { type: 'text', required: true, autocomplete: 'off' });
   const enPw = h('input', { type: 'password', required: true, autocomplete: 'new-password' });
   const enBtn = h('button', { class: 'btn primary', type: 'submit', text: 'Instanz hinzufügen' });
   const srvName = h('input', { type: 'text', value: remote.serverName, placeholder: inst.serverName, maxlength: 64 });
@@ -688,19 +687,19 @@ async function renderSettings() {
       e.preventDefault();
       guarded(enBtn, async () => {
         await api('PUT', '/settings/remote', { ...remote, serverName: srvName.value.trim() });
-        await api('POST', '/remote/instances', { url: enUrl.value.trim(), code: enCode.value, user: enUser.value, password: enPw.value });
+        await api('POST', '/remote/instances', { url: enUrl.value.trim(), code: enCode.value, password: enPw.value });
         toast('Instanz hinzugefügt');
         renderSettings();
       });
     },
   },
   h('div', { class: 'card-head' }, h('h3', { text: 'Sticks teilen über rtl.over.internet' })),
-  h('p', { class: 'muted', text: 'Ohne VPN und ohne Portfreigabe: rtl.over.internet vermittelt nur, der Stream läuft direkt zwischen den Servern. Code, Benutzer und Passwort der Instanz bekommst du vom Betreiber; gespeichert wird nur ein Token.' }),
+  h('p', { class: 'muted', text: 'Ohne VPN und ohne Portfreigabe: rtl.over.internet vermittelt nur, der Stream läuft direkt zwischen den Servern. Code und Passwort der Instanz bekommst du vom Betreiber; gespeichert wird nur ein Token.' }),
   inst.unavailable ? h('div', { class: 'notice err', text: inst.unavailable }) : null,
   inst.instances.map(instCard),
   h('h3', { class: 'section-title', text: 'Instanz hinzufügen' }),
   h('div', { class: 'form-grid' },
-    field('Adresse', enUrl), field('Instanz-Code', enCode), field('Benutzer', enUser), field('Passwort', enPw),
+    field('Adresse', enUrl), field('Instanz-Code', enCode), field('Passwort', enPw, 'der Instanz'),
     field('Name dieses Servers', srvName, 'sehen die anderen Standorte, leer = Computername')),
   h('div', { class: 'buttons' }, enBtn));
 

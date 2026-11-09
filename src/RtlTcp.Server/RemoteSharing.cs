@@ -151,10 +151,10 @@ public sealed class RemoteSharing(string dataDir, ILoggerFactory loggers) : IDis
     // ---------------------------------------------------------------- enrollment / tokens
 
     /// <summary>Enrolls in an instance and stores the token. Returns the new config entry (not yet saved).</summary>
-    public async Task<InstanceConfig> EnrollAsync(string url, string code, string user, string password, string serverName,
+    public async Task<InstanceConfig> EnrollAsync(string url, string code, string password, string serverName,
         string version, CancellationToken ct)
     {
-        var e = await BrokerClient.EnrollAsync(url, code, user, password, ServerId, serverName, version, ct);
+        var e = await BrokerClient.EnrollAsync(url, code, password, ServerId, serverName, version, ct);
         var inst = new InstanceConfig { Id = Guid.NewGuid().ToString("N")[..12], Url = url.TrimEnd('/'), Name = e.InstanceName, DeviceId = e.DeviceId };
         lock (_tokenLock)
         {
