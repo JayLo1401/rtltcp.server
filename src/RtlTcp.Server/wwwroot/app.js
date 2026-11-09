@@ -253,7 +253,11 @@ async function renderStatus() {
         h('p', {}, h('strong', { text: 'Neuer Stick erkannt: ' }), fresh.map((x) => `${x.name} (${x.serial})`).join(', '), ' – ',
           h('a', { href: '#/devices', text: 'unter Geräte eintragen' }))) : null,
       s.devices.length ? h('div', { class: 'cards' }, cards)
-        : h('div', { class: 'notice', text: 'Noch kein Gerät eingetragen.' }));
+        : h('div', { class: 'notice', text: 'Noch kein Gerät eingetragen.' }),
+      h('p', { class: 'muted' },
+        s.remote.fingerprint ? `Teilen über das Internet: Fingerprint dieses Servers ${s.remote.fingerprint}` : null,
+        s.remote.listen ? ` · Freigabe aktiv auf UDP ${s.remote.listen}` : null,
+        s.remote.error ? ` · ${s.remote.error}` : null));
   };
   await refresh();
   pollTimer = setInterval(refresh, 2000);
@@ -305,7 +309,10 @@ async function renderDevices() {
         switchEl(d.enabled, (v) => { d.enabled = v; }, 'aktiv')),
       h('div', { class: 'form-grid' },
         field('Name', h('input', { type: 'text', value: d.name, maxlength: 64, oninput: (e) => { d.name = e.target.value; } })),
-        field('Stick', serial, 'über die Seriennummer zugeordnet'),
+        d.remote
+          ? field('Entfernter Stick', h('input', { type: 'text', disabled: true, value: `${d.remote.share} @ ${d.remote.host}:${d.remote.port}` }),
+            'über das Internet, Eintrag in config.json (Testbetrieb)')
+          : field('Stick', serial, 'über die Seriennummer zugeordnet'),
         field('Port', num(d.port, (v) => { d.port = v; }, { min: 1, max: 65535 })),
         field('Adresse', h('input', { type: 'text', value: d.bind, oninput: (e) => { d.bind = e.target.value.trim(); } }), '0.0.0.0 = alle Netzwerkkarten'),
         field('Stick abschalten nach', num(d.idleTimeoutSeconds, (v) => { d.idleTimeoutSeconds = v; }, { min: 0 }), 'Sekunden ohne Client, 0 = immer an'),

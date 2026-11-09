@@ -43,6 +43,7 @@ Section: hamradio
 Priority: optional
 Architecture: $ARCH
 Depends: libusb-1.0-0, libssl3t64 | libssl3 | libssl1.1, libc6, libstdc++6, libgcc-s1 | libgcc1, zlib1g, passwd, curl, ca-certificates
+Suggests: libmsquic
 Installed-Size: $SIZE_KB
 Maintainer: jaycloud <noreply@jaycloud.at>
 Homepage: https://github.com/JayLo1401/rtltcp.server

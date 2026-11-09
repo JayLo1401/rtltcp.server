@@ -56,6 +56,9 @@ public static class ErrorCodes
     public const string Kicked = "KICKED";
     public const string InvalidCommand = "INVALID_COMMAND";
     public const string ProtocolError = "PROTOCOL_ERROR";
+
+    /// <summary>Remote site: the requested stick is not shared with this peer (or does not exist).</summary>
+    public const string NotFound = "NOT_FOUND";
 }
 
 public sealed record PingMessage(long Id) : V2Message;

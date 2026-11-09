@@ -1,0 +1,195 @@
+using System.Collections.Concurrent;
+using System.Net;
+using System.Net.Quic;
+using System.Net.Security;
+using System.Runtime.Versioning;
+using Microsoft.Extensions.Logging;
+using RtlTcp.Core.Auth;
+using RtlTcp.Core.Config;
+using RtlTcp.Core.Device;
+using RtlTcp.Core.Protocol;
+using RtlTcp.Core.Server;
+
+namespace RtlTcp.Core.Remote;
+
+/// <summary>
+/// Provider side (Standort 1): accepts QUIC connections from other rtltcp.server sites whose certificate
+/// fingerprint is a known peer, and serves each stream like a local v2 client of the requested stick
+/// (same ownership rule, idle shutdown and reconnect).
+/// </summary>
+[SupportedOSPlatform("windows")]
+[SupportedOSPlatform("linux")]
+[SupportedOSPlatform("macos")]
+public sealed class ShareHost : IAsyncDisposable
+{
+    /// <summary>Peers authenticate by certificate; no SCRAM on top.</summary>
+    private static readonly AccessPolicy NoAuth = new(authEnabled: false, []);
+
+    private static readonly TimeSpan PreambleTimeout = TimeSpan.FromSeconds(10);
+
+    private readonly IPEndPoint _endPoint;
+    private readonly PeerIdentity _identity;
+    private readonly Func<IReadOnlyList<RemotePeerConfig>> _peers;
+    private readonly Func<string, DeviceManager?> _findDevice;
+    private readonly IStreamUserStore _users;
+    private readonly string _version;
+    private readonly ILogger _log;
+    private readonly CancellationTokenSource _cts = new();
+    private readonly ConcurrentDictionary<Task, byte> _tasks = new();
+    private QuicListener? _listener;
+    private Task? _accept;
+
+    /// <param name="peers">Read per connection, so changes apply to the next connection.</param>
+    /// <param name="findDevice">Running stick by serial (share id).</param>
+    public ShareHost(IPEndPoint endPoint, PeerIdentity identity, Func<IReadOnlyList<RemotePeerConfig>> peers,
+        Func<string, DeviceManager?> findDevice, IStreamUserStore users, string version, ILogger log)
+    {
+        _endPoint = endPoint;
+        _identity = identity;
+        _peers = peers;
+        _findDevice = findDevice;
+        _users = users;
+        _version = version;
+        _log = log;
+    }
+
+    public IPEndPoint? LocalEndPoint => _listener?.LocalEndPoint;
+
+    public async Task StartAsync()
+    {
+        _listener = await QuicListener.ListenAsync(new QuicListenerOptions
+        {
+            ListenEndPoint = _endPoint,
+            ApplicationProtocols = [RemoteProtocol.Alpn],
+            ConnectionOptionsCallback = (_, _, _) => ValueTask.FromResult(new QuicServerConnectionOptions
+            {
+                DefaultStreamErrorCode = RemoteProtocol.ErrorStreamAborted,
+                DefaultCloseErrorCode = RemoteProtocol.ErrorNone,
+                IdleTimeout = RemoteProtocol.IdleTimeout,
+                KeepAliveInterval = RemoteProtocol.KeepAlive,
+                MaxInboundBidirectionalStreams = 8,
+                MaxInboundUnidirectionalStreams = 0,
+                ServerAuthenticationOptions = new SslServerAuthenticationOptions
+                {
+                    ApplicationProtocols = [RemoteProtocol.Alpn],
+                    ServerCertificate = _identity.Certificate,
+                    ClientCertificateRequired = true,
+                    RemoteCertificateValidationCallback = (_, cert, _, _) => cert is not null && FindPeer(cert) is not null,
+                },
+            }),
+        }, _cts.Token);
+        _log.LogInformation("Remote sharing: listening on udp {EndPoint}, certificate {Fingerprint}",
+            _listener.LocalEndPoint, _identity.Fingerprint);
+        _accept = AcceptLoopAsync(_cts.Token);
+    }
+
+    private RemotePeerConfig? FindPeer(System.Security.Cryptography.X509Certificates.X509Certificate cert) =>
+        _peers().FirstOrDefault(p => RemoteProtocol.FingerprintMatches(cert, p.Fingerprint));
+
+    private void Track(Task task)
+    {
+        _tasks.TryAdd(task, 0);
+        _ = task.ContinueWith(t => _tasks.TryRemove(t, out _), TaskScheduler.Default);
+    }
+
+    private async Task AcceptLoopAsync(CancellationToken ct)
+    {
+        while (!ct.IsCancellationRequested)
+        {
+            QuicConnection conn;
+            try
+            {
+                conn = await _listener!.AcceptConnectionAsync(ct);
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested) { break; }
+            catch (Exception ex) when (ex is QuicException or System.Security.Authentication.AuthenticationException
+                                           or OperationCanceledException)
+            {
+                // failed handshake, e.g. unknown certificate: the peer gets nothing usable
+                _log.LogInformation("Remote sharing: connection refused: {Error}", ex.Message);
+                continue;
+            }
+            Track(Task.Run(() => ServeConnectionAsync(conn, ct), CancellationToken.None));
+        }
+    }
+
+    private async Task ServeConnectionAsync(QuicConnection conn, CancellationToken ct)
+    {
+        await using var _ = conn;
+        var peer = conn.RemoteCertificate is { } cert ? FindPeer(cert) : null;
+        var ip = conn.RemoteEndPoint.Address;
+        var ipText = (ip.IsIPv4MappedToIPv6 ? ip.MapToIPv4() : ip).ToString();
+        if (peer is null)
+        {
+            await conn.CloseAsync(RemoteProtocol.ErrorNone, CancellationToken.None);
+            return;
+        }
+        var who = $"{peer.Name} ({ipText})";
+        _log.LogInformation("Remote sharing: {Peer} connected", who);
+        var streams = new List<Task>();
+        try
+        {
+            while (!ct.IsCancellationRequested)
+            {
+                var stream = await conn.AcceptInboundStreamAsync(ct);
+                streams.Add(Task.Run(() => ServeStreamAsync(stream, peer, ip, who, ct), CancellationToken.None));
+            }
+        }
+        catch (Exception ex) when (ex is QuicException or OperationCanceledException or ObjectDisposedException) { }
+        finally
+        {
+            await Task.WhenAll(streams);
+            _log.LogInformation("Remote sharing: {Peer} disconnected", who);
+        }
+    }
+
+    private async Task ServeStreamAsync(QuicStream stream, RemotePeerConfig peer, IPAddress ip, string who, CancellationToken ct)
+    {
+        await using var _ = stream;
+        try
+        {
+            string share;
+            using (var t = CancellationTokenSource.CreateLinkedTokenSource(ct))
+            {
+                t.CancelAfter(PreambleTimeout);
+                share = await RemoteProtocol.ReadSharePreambleAsync(stream, t.Token);
+            }
+
+            var manager = peer.Devices.Contains(share, StringComparer.OrdinalIgnoreCase) ? _findDevice(share) : null;
+            if (manager is null)
+            {
+                _log.LogInformation("Remote sharing: {Peer} asked for stick {Share}, which is not shared with it", who, share);
+                await RejectAsync(stream, $"Stick {share} is not shared with this server", ct);
+                return;
+            }
+
+            var conn = new ClientConnection(stream, ip, who, stream.CompleteWrites, waitForHello: false);
+            await new ClientSession(conn, manager, NoAuth, _users, _version, _log, ct).RunAsync();
+        }
+        catch (Exception ex) when (ex is QuicException or IOException or OperationCanceledException
+                                       or EndOfStreamException or ProtocolException) { }
+    }
+
+    /// <summary>Answers like a v2 server with a fatal NOT_FOUND, so the other side can show why.</summary>
+    private static async Task RejectAsync(QuicStream stream, string message, CancellationToken ct)
+    {
+        var hello = new byte[Command.Size];
+        await stream.ReadExactlyAsync(hello, ct);
+        var header = new byte[V2.HeaderSize];
+        V2.WriteHeader(header, V2HeaderFlags.None);
+        var json = V2Json.Serialize(new ErrorMessage(ErrorCodes.NotFound, message, true));
+        var frame = new byte[FrameHeader.Size + json.Length];
+        new FrameHeader(FrameType.Json, json.Length).Write(frame);
+        json.CopyTo(frame, FrameHeader.Size);
+        await stream.WriteAsync(header.Concat(frame).ToArray(), completeWrites: true, ct);
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        await _cts.CancelAsync();
+        if (_accept is not null) await _accept;
+        await Task.WhenAll(_tasks.Keys);
+        if (_listener is not null) await _listener.DisposeAsync();
+        _cts.Dispose();
+    }
+}

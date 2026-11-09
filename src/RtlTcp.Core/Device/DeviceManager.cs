@@ -83,8 +83,13 @@ public sealed class DeviceManager : IAsyncDisposable
         _settings = DeviceSettings.FromDefaults(config.Defaults);
         UpdateTuning();
         _loop = Task.Run(RunAsync);
-        if (config.IdleTimeoutSeconds <= 0) Post(new Retry()); // always-on: open right away
+        if (AlwaysOn) Post(new Retry()); // open right away
     }
+
+    /// <summary>Keep the stick open without clients (idle timeout 0). Never for remote sticks.</summary>
+    private bool AlwaysOn => Config.IdleTimeoutSeconds <= 0 && !_source.IsRemote;
+
+    private string NotReadyText => _source.IsRemote ? "Remote stick not ready" : "USB device not ready";
 
     public DeviceConfig Config { get; }
     public DeviceState State { get; private set; } = DeviceState.Idle;
@@ -203,9 +208,15 @@ public sealed class DeviceManager : IAsyncDisposable
                 StopStream();
                 if (_device is null)
                 {
-                    if (Config.IdleTimeoutSeconds > 0) SetState(DeviceState.Idle, "Device idle");
+                    if (!AlwaysOn) SetState(DeviceState.Idle, "Device idle");
                 }
-                else if (Config.IdleTimeoutSeconds > 0)
+                else if (_source.IsRemote)
+                {
+                    _log.LogInformation("{Device}: last client left, closing connection to remote stick", Config.Name);
+                    CloseDevice(powerDown: false);
+                    SetState(DeviceState.Idle, "Device idle");
+                }
+                else if (!AlwaysOn)
                 {
                     var gen = ++_idleGeneration;
                     _ = PostLater(TimeSpan.FromSeconds(Config.IdleTimeoutSeconds), new IdleExpired(gen));
@@ -225,13 +236,14 @@ public sealed class DeviceManager : IAsyncDisposable
             case StreamFailed f when f.Generation == _streamGeneration:
                 _log.LogWarning("{Device}: stick lost ({Error})", Config.Name, f.Error.Message);
                 CloseDevice(powerDown: false);
-                SetState(DeviceState.Lost, "USB device lost, reconnecting");
+                SetState(DeviceState.Lost, _source.IsRemote
+                    ? "Connection to remote stick lost, reconnecting" : "USB device lost, reconnecting");
                 ScheduleRetry();
                 break;
 
             case Retry:
                 _retryScheduled = false;
-                if (_device is null && (Owner is not null || Config.IdleTimeoutSeconds <= 0)) TryOpen();
+                if (_device is null && (Owner is not null || AlwaysOn)) TryOpen();
                 break;
 
             case Kick when Owner is { } kicked:
@@ -245,7 +257,8 @@ public sealed class DeviceManager : IAsyncDisposable
     private void TryOpen()
     {
         var wasLost = State == DeviceState.Lost;
-        if (State is DeviceState.Idle) SetState(DeviceState.Starting, "Opening USB device");
+        if (State is DeviceState.Idle)
+            SetState(DeviceState.Starting, _source.IsRemote ? "Connecting to remote stick" : "Opening USB device");
 
         ISdrDevice? dev = null;
         try
@@ -259,7 +272,7 @@ public sealed class DeviceManager : IAsyncDisposable
 
         if (dev is null)
         {
-            if (!wasLost) SetState(DeviceState.NotReady, "USB device not ready");
+            if (!wasLost) SetState(DeviceState.NotReady, _source.LastError ?? NotReadyText);
             ScheduleRetry();
             return;
         }

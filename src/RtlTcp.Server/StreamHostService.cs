@@ -20,6 +20,10 @@ public sealed class StreamHostService(ServerConfigHolder config, UserStore users
     private List<(DeviceManager Manager, StreamServer Server)> _devices = [];
     private LibUsbBackend? _usb;
     private RtlSdrDeviceSource? _source;
+    private readonly RemoteSharing _remote = new(config.DataDir, loggers.CreateLogger("remote"));
+
+    /// <summary>Sharing sticks between sites (QUIC): own fingerprint, availability, listener state.</summary>
+    public RemoteSharing Remote => _remote;
 
     /// <summary>Running devices, keyed by their config entry.</summary>
     public IReadOnlyList<DeviceManager> Managers => _devices.Select(d => d.Manager).ToList();
@@ -36,8 +40,9 @@ public sealed class StreamHostService(ServerConfigHolder config, UserStore users
         _source = new RtlSdrDeviceSource(_usb);
         if (config.Current.Devices.Count == 0) AutoConfigure(config.Current, _source);
 
+        _remote.Init();
         await _gate.WaitAsync(cancellationToken);
-        try { StartDevices(); }
+        try { await StartDevicesAsync(); }
         finally { _gate.Release(); }
     }
 
@@ -48,7 +53,7 @@ public sealed class StreamHostService(ServerConfigHolder config, UserStore users
         try
         {
             await StopDevicesAsync();
-            StartDevices();
+            await StartDevicesAsync();
         }
         finally
         {
@@ -56,15 +61,16 @@ public sealed class StreamHostService(ServerConfigHolder config, UserStore users
         }
     }
 
-    private void StartDevices()
+    private async Task StartDevicesAsync()
     {
         var cfg = config.Current;
         var started = new List<(DeviceManager, StreamServer)>();
         var errors = new Dictionary<int, string>();
         foreach (var dc in cfg.Devices.Where(d => d.Enabled))
         {
-            var others = cfg.Devices.Where(d => d != dc && d.Serial.Length > 0).Select(d => d.Serial).ToArray();
-            var manager = new DeviceManager(dc, _source!, loggers.CreateLogger($"device.{dc.Port}"), () => others);
+            var others = cfg.Devices.Where(d => d != dc && d.Serial.Length > 0 && d.Remote is null).Select(d => d.Serial).ToArray();
+            var source = dc.Remote is { } remote ? _remote.SourceFor(remote, loggers.CreateLogger($"remote.{dc.Port}")) : _source!;
+            var manager = new DeviceManager(dc, source, loggers.CreateLogger($"device.{dc.Port}"), () => others);
             var server = new StreamServer(manager, () => config.Policy, users, Version, loggers.CreateLogger($"stream.{dc.Port}"));
             try
             {
@@ -80,10 +86,15 @@ public sealed class StreamHostService(ServerConfigHolder config, UserStore users
         }
         _devices = started;
         StartErrors = errors;
+        await _remote.StartShareHostAsync(cfg.Remote, users, Version,
+            share => _devices.Select(d => d.Manager).FirstOrDefault(m => m.Config.Remote is null &&
+                (string.Equals(m.Config.Serial, share, StringComparison.OrdinalIgnoreCase) ||
+                 string.Equals(m.OpenSerial, share, StringComparison.OrdinalIgnoreCase))));
     }
 
     private async Task StopDevicesAsync()
     {
+        await _remote.StopShareHostAsync();
         var devices = _devices;
         _devices = [];
         foreach (var (manager, server) in devices)
@@ -116,6 +127,7 @@ public sealed class StreamHostService(ServerConfigHolder config, UserStore users
             await StopDevicesAsync();
             _usb?.Dispose();
             _usb = null;
+            _remote.Dispose();
         }
         finally
         {

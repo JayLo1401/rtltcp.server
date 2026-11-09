@@ -28,7 +28,10 @@ public static class WebApi
         string? Tuner, ulong? Frequency, uint? SampleRate, int? Gain, bool BiasTee, string? Error);
 
     public sealed record StatusDto(string Version, bool AuthEnabled, List<DeviceStatusDto> Devices, List<StickDto> Sticks,
-        string? UpdateVersion, bool UpdateCanInstall);
+        string? UpdateVersion, bool UpdateCanInstall, RemoteStatusDto Remote);
+
+    /// <summary>Sharing between sites: own fingerprint (for the other side), listener, or why it is unavailable.</summary>
+    public sealed record RemoteStatusDto(string? Fingerprint, string? Listen, string? Error);
 
     public sealed record UpdateDto(string Mode, string Current, string? Latest, bool Available, bool CanInstall,
         DateTimeOffset? LastCheck, string State, string? Message, bool AutoUpdate, string Time);
@@ -164,8 +167,10 @@ public static class WebApi
             foreach (var m in host.Managers)
                 if (m.OpenSerial is { } serial && sticks.All(s => s.Serial != serial))
                     sticks.Add(new StickDto(serial, "in Verwendung", "", configured.Contains(serial)));
+            var r = host.Remote;
             return new StatusDto(StreamHostService.Version, cfg.Current.Auth.Enabled, devices, sticks,
-                update.UpdateAvailable ? update.Latest!.Version : null, update.CanInstall);
+                update.UpdateAvailable ? update.Latest!.Version : null, update.CanInstall,
+                new RemoteStatusDto(r.Fingerprint, r.ListenEndPoint?.ToString(), r.Unavailable ?? r.ListenError));
         });
 
         admin.MapPost("/devices/{port:int}/kick", (HttpContext ctx, int port, StreamHostService host) =>
@@ -334,9 +339,19 @@ public static class WebApi
         }
         var dupPort = devices.Where(d => d.Enabled).GroupBy(d => d.Port).FirstOrDefault(g => g.Count() > 1);
         if (dupPort is not null) return $"Port {dupPort.Key} ist mehrfach vergeben";
-        var dupSerial = devices.Where(d => d.Serial.Length > 0).GroupBy(d => d.Serial).FirstOrDefault(g => g.Count() > 1);
+        foreach (var d in devices)
+        {
+            if (d.Remote is not { } r) continue;
+            if (string.IsNullOrWhiteSpace(r.Host)) return $"{d.Name}: Adresse des entfernten Servers fehlt";
+            if (r.Port is < 1 or > 65535) return $"{d.Name}: ungültiger Port {r.Port} des entfernten Servers";
+            if (RtlTcp.Core.Remote.RemoteProtocol.NormalizeFingerprint(r.Fingerprint).Length != 64)
+                return $"{d.Name}: Fingerprint des entfernten Servers ungültig (SHA-256, 64 Hex-Zeichen)";
+            if (string.IsNullOrWhiteSpace(r.Share)) return $"{d.Name}: Seriennummer des entfernten Sticks fehlt";
+        }
+        var usb = devices.Where(d => d.Remote is null).ToList();
+        var dupSerial = usb.Where(d => d.Serial.Length > 0).GroupBy(d => d.Serial).FirstOrDefault(g => g.Count() > 1);
         if (dupSerial is not null) return $"Stick {dupSerial.Key} ist mehrfach eingetragen";
-        if (devices.Count(d => d.Enabled && d.Serial.Length == 0) > 1) return "Nur ein Gerät darf ohne Seriennummer sein";
+        if (usb.Count(d => d.Enabled && d.Serial.Length == 0) > 1) return "Nur ein Gerät darf ohne Seriennummer sein";
         return null;
     }
 }

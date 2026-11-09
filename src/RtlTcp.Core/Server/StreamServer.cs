@@ -66,7 +66,7 @@ public sealed class StreamServer : IAsyncDisposable
                 continue;
             }
 
-            var session = new ClientSession(client, _manager, _policy(), _users, _version, _log, ct);
+            var session = new ClientSession(ClientConnection.FromSocket(client), _manager, _policy(), _users, _version, _log, ct);
             var task = Task.Run(session.RunAsync, CancellationToken.None);
             _sessions.TryAdd(task, 0);
             _ = task.ContinueWith(t => _sessions.TryRemove(t, out _), TaskScheduler.Default);

@@ -28,6 +28,15 @@ public interface ISdrDeviceSource
 
     /// <summary>All sticks currently connected.</summary>
     IReadOnlyList<UsbDeviceInfo> List();
+
+    /// <summary>
+    /// True for sticks at another site: never kept open without a client (that would stream over the
+    /// internet for nothing), closed as soon as the client leaves.
+    /// </summary>
+    bool IsRemote => false;
+
+    /// <summary>Why the last <see cref="TryOpen"/> returned null, for the status message; null = generic text.</summary>
+    string? LastError => null;
 }
 
 /// <summary>Opens real RTL2832U sticks through an <see cref="IUsbBackend"/>.</summary>

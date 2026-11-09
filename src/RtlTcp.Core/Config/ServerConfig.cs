@@ -13,6 +13,7 @@ public sealed class ServerConfig
     public AuthConfig Auth { get; set; } = new();
     public LogConfig Logging { get; set; } = new();
     public UpdateConfig Update { get; set; } = new();
+    public RemoteConfig Remote { get; set; } = new();
     public List<DeviceConfig> Devices { get; set; } = [];
 
     private static readonly JsonSerializerOptions Json = new()
@@ -89,6 +90,50 @@ public sealed class DeviceConfig
     public int V1WaitForDeviceSeconds { get; set; } = 10;
 
     public DeviceDefaults Defaults { get; set; } = new();
+
+    /// <summary>Set: not a USB stick but a stick shared by another rtltcp.server (Standort 2). <see cref="Serial"/> is unused.</summary>
+    public RemoteDeviceConfig? Remote { get; set; }
+}
+
+/// <summary>
+/// Sharing sticks with other rtltcp.server installations over QUIC (Standort 1, provider side).
+/// For now peers are entered manually (test mode, needs a reachable UDP port); later rtl.over.internet
+/// supplies peers, addresses and fingerprints per session.
+/// </summary>
+public sealed class RemoteConfig
+{
+    /// <summary>UDP port the QUIC listener uses; 0 = do not accept remote clients.</summary>
+    public int ListenPort { get; set; }
+    public string Bind { get; set; } = "::";
+    public List<RemotePeerConfig> Peers { get; set; } = [];
+}
+
+/// <summary>Another rtltcp.server allowed to use some of our sticks, identified by its certificate fingerprint.</summary>
+public sealed class RemotePeerConfig
+{
+    public string Name { get; set; } = "";
+
+    /// <summary>SHA-256 of the peer's certificate (hex, colons optional), shown in its web GUI.</summary>
+    public string Fingerprint { get; set; } = "";
+
+    /// <summary>Serials of the sticks this peer may use.</summary>
+    public List<string> Devices { get; set; } = [];
+}
+
+/// <summary>Where a remote stick lives (Standort 2, user side).</summary>
+public sealed class RemoteDeviceConfig
+{
+    /// <summary>Host name or IP of the providing rtltcp.server.</summary>
+    public string Host { get; set; } = "";
+
+    /// <summary>Its QUIC (UDP) port, see <see cref="RemoteConfig.ListenPort"/>.</summary>
+    public int Port { get; set; }
+
+    /// <summary>SHA-256 of the provider's certificate; any other certificate is rejected.</summary>
+    public string Fingerprint { get; set; } = "";
+
+    /// <summary>Serial of the shared stick at the provider.</summary>
+    public string Share { get; set; } = "";
 }
 
 /// <summary>Settings applied whenever a new client takes over the stick.</summary>

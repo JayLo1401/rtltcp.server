@@ -10,6 +10,15 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends libusb-1.0-0 libssl3 ca-certificates curl \
     && rm -rf /var/lib/apt/lists/*
 
+# libmsquic for sharing sticks over the internet (QUIC), from Microsoft's Debian repository.
+# Optional: without it the server runs normally and the web interface says why sharing is unavailable.
+RUN set -eu; \
+    curl -fsSL -o /tmp/ms.deb https://packages.microsoft.com/config/debian/12/packages-microsoft-prod.deb \
+    && dpkg -i /tmp/ms.deb && rm /tmp/ms.deb \
+    && apt-get update \
+    && (apt-get install -y --no-install-recommends libmsquic || echo "libmsquic not available for ${BUILD_ARCH}") \
+    && rm -rf /var/lib/apt/lists/*
+
 # The released Linux build of exactly this add-on version, checksum-verified
 RUN set -eu; \
     case "${BUILD_ARCH}" in \

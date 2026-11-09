@@ -9,7 +9,34 @@ using RtlTcp.Core.Protocol;
 
 namespace RtlTcp.Core.Server;
 
-/// <summary>One TCP client, v1 or v2 (decided by HELLO), see docs/protocol-v2.md.</summary>
+/// <summary>Transport of one client: a TCP socket or a QUIC stream from a remote site.</summary>
+internal sealed class ClientConnection(Stream stream, IPAddress remoteIp, string remoteAddress, Action shutdownSend,
+    bool waitForHello = true)
+{
+    public Stream Stream { get; } = stream;
+    public IPAddress RemoteIp { get; } = remoteIp;
+    public string RemoteAddress { get; } = remoteAddress;
+
+    /// <summary>Half-close: no more data from us (TCP FIN / QUIC end of stream).</summary>
+    public Action ShutdownSend { get; } = shutdownSend;
+
+    /// <summary>
+    /// True: wait at most <see cref="V2.HelloTimeout"/> for HELLO, then fall back to v1 (TCP).
+    /// False: the peer always speaks v2 (QUIC); a cancelled read would abort the QUIC stream.
+    /// </summary>
+    public bool WaitForHello { get; } = waitForHello;
+
+    public static ClientConnection FromSocket(Socket socket)
+    {
+        socket.NoDelay = true;
+        socket.SendBufferSize = 1 << 20;
+        var ip = ((IPEndPoint)socket.RemoteEndPoint!).Address;
+        return new ClientConnection(new NetworkStream(socket, ownsSocket: true), ip,
+            (ip.IsIPv4MappedToIPv6 ? ip.MapToIPv4() : ip).ToString(), () => socket.Shutdown(SocketShutdown.Send));
+    }
+}
+
+/// <summary>One client, v1 or v2 (decided by HELLO), see docs/protocol-v2.md.</summary>
 internal sealed class ClientSession : IStreamOwner
 {
     internal const string AuthRequiredText = "Authentication required: the server only accepts authenticated clients";
@@ -20,8 +47,8 @@ internal sealed class ClientSession : IStreamOwner
     private const int IqQueueBuffers = 64;
     private const int V2IqFrameSize = 64 * 1024;
 
-    private readonly Socket _socket;
-    private readonly NetworkStream _net;
+    private readonly ClientConnection _conn;
+    private readonly Stream _net;
     private readonly DeviceManager _manager;
     private readonly AccessPolicy _policy;
     private readonly IStreamUserStore _users;
@@ -39,21 +66,19 @@ internal sealed class ClientSession : IStreamOwner
     private string? _lastMessage;
     private long _dropped;
 
-    public ClientSession(Socket socket, DeviceManager manager, AccessPolicy policy, IStreamUserStore users,
+    public ClientSession(ClientConnection conn, DeviceManager manager, AccessPolicy policy, IStreamUserStore users,
         string serverVersion, ILogger log, CancellationToken serverToken)
     {
-        _socket = socket;
-        _socket.NoDelay = true;
-        _socket.SendBufferSize = 1 << 20;
-        _net = new NetworkStream(socket, ownsSocket: true);
+        _conn = conn;
+        _net = conn.Stream;
         _manager = manager;
         _policy = policy;
         _users = users;
         _serverVersion = serverVersion;
         _log = log;
         _cts = CancellationTokenSource.CreateLinkedTokenSource(serverToken);
-        RemoteIp = ((IPEndPoint)socket.RemoteEndPoint!).Address;
-        RemoteAddress = (RemoteIp.IsIPv4MappedToIPv6 ? RemoteIp.MapToIPv4() : RemoteIp).ToString();
+        RemoteIp = conn.RemoteIp;
+        RemoteAddress = conn.RemoteAddress;
     }
 
     public IPAddress RemoteIp { get; }
@@ -132,6 +157,11 @@ internal sealed class ClientSession : IStreamOwner
     private async Task<byte[]> ReadHelloAsync(CancellationToken ct)
     {
         var buf = new byte[Command.Size];
+        if (!_conn.WaitForHello)
+        {
+            await _net.ReadExactlyAsync(buf, ct);
+            return buf;
+        }
         var n = 0;
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
         timeout.CancelAfter(V2.HelloTimeout);
@@ -139,7 +169,7 @@ internal sealed class ClientSession : IStreamOwner
         {
             while (n < buf.Length)
             {
-                var r = await _socket.ReceiveAsync(buf.AsMemory(n), SocketFlags.None, timeout.Token);
+                var r = await _net.ReadAsync(buf.AsMemory(n), timeout.Token);
                 if (r == 0) throw new EndOfStreamException();
                 n += r;
             }
@@ -304,12 +334,13 @@ internal sealed class ClientSession : IStreamOwner
     {
         try
         {
-            _socket.Shutdown(SocketShutdown.Send);
+            _conn.ShutdownSend();
             using var t = new CancellationTokenSource(TimeSpan.FromSeconds(1));
             var buf = new byte[4096];
-            while (await _socket.ReceiveAsync(buf, SocketFlags.None, t.Token) > 0) { }
+            while (await _net.ReadAsync(buf, t.Token) > 0) { }
         }
-        catch (Exception ex) when (ex is SocketException or OperationCanceledException or ObjectDisposedException) { }
+        catch (Exception ex) when (ex is IOException or SocketException or OperationCanceledException or ObjectDisposedException
+                                       or InvalidOperationException) { }
     }
 
     private async Task TrySendAsync(byte[] data)
