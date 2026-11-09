@@ -7,10 +7,6 @@ namespace RtlTcp.Core.Protocol;
 [JsonPolymorphic(TypeDiscriminatorPropertyName = "type",
     UnknownDerivedTypeHandling = JsonUnknownDerivedTypeHandling.FailSerialization)]
 [JsonDerivedType(typeof(ServerInfoMessage), "server_info")]
-[JsonDerivedType(typeof(AuthStartMessage), "auth_start")]
-[JsonDerivedType(typeof(AuthChallengeMessage), "auth_challenge")]
-[JsonDerivedType(typeof(AuthProofMessage), "auth_proof")]
-[JsonDerivedType(typeof(AuthOkMessage), "auth_ok")]
 [JsonDerivedType(typeof(StatusMessage), "status")]
 [JsonDerivedType(typeof(ErrorMessage), "error")]
 [JsonDerivedType(typeof(PingMessage), "ping")]
@@ -19,19 +15,11 @@ public abstract record V2Message;
 
 public sealed record DeviceInfo(string Name, string Serial);
 
+/// <param name="Auth">Always "none": clients are not authenticated (kept for older clients that read it).</param>
 public sealed record ServerInfoMessage(string Server, string Version, DeviceInfo Device, string Auth) : V2Message
 {
     public const string AuthNone = "none";
-    public const string AuthRequired = "required";
 }
-
-public sealed record AuthStartMessage(string User, string Cnonce) : V2Message;
-
-public sealed record AuthChallengeMessage(string Nonce, string Salt, int Iterations) : V2Message;
-
-public sealed record AuthProofMessage(string Proof) : V2Message;
-
-public sealed record AuthOkMessage(string Signature) : V2Message;
 
 public sealed record TunerInfo(TunerType Type, string Name, int[] Gains);
 
@@ -51,8 +39,6 @@ public sealed record ErrorMessage(string Code, string Message, bool Fatal, strin
 public static class ErrorCodes
 {
     public const string Busy = "BUSY";
-    public const string AuthRequired = "AUTH_REQUIRED";
-    public const string AuthFailed = "AUTH_FAILED";
     public const string Kicked = "KICKED";
     public const string InvalidCommand = "INVALID_COMMAND";
     public const string ProtocolError = "PROTOCOL_ERROR";

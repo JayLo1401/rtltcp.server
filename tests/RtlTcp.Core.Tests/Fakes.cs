@@ -1,6 +1,5 @@
 using System.Collections.Concurrent;
 using System.Net.Sockets;
-using RtlTcp.Core.Auth;
 using RtlTcp.Core.Device;
 using RtlTcp.Core.Protocol;
 using RtlTcp.Core.Usb;
@@ -90,13 +89,6 @@ internal sealed class FakeStream : IBulkStream
         _running = false;
         if (Thread.CurrentThread != _thread) _thread.Join();
     }
-}
-
-internal sealed class FakeUsers : IStreamUserStore
-{
-    public readonly Dictionary<string, ScramCredentials> Users = [];
-    public ScramCredentials? Find(string user, string deviceSerial) => Users.GetValueOrDefault(user);
-    public byte[] ServerSecret { get; } = new byte[32];
 }
 
 /// <summary>Minimal test client speaking v1/v2.</summary>

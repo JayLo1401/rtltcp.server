@@ -10,7 +10,6 @@ const rateSamples = {}; // port -> { bytes, time }
 const SAMPLE_RATES = [250000, 1024000, 1536000, 1800000, 1920000, 2048000, 2400000, 2560000, 2880000, 3200000];
 const GAINS = [0, 9, 14, 27, 37, 77, 87, 125, 144, 157, 166, 197, 207, 229, 254, 280, 297, 328, 338, 364, 372, 386,
   402, 421, 434, 439, 445, 480, 483, 488, 496];
-const DEFAULT_NETS = ['127.0.0.0/8', '10.0.0.0/8', '172.16.0.0/12', '192.168.0.0/16', '::1/128', 'fc00::/7', 'fe80::/10'];
 
 // ------------------------------------------------------------------ helpers
 
@@ -103,7 +102,7 @@ function setPage(...children) {
 
 // ------------------------------------------------------------------ routing
 
-const pages = { status: renderStatus, devices: renderDevices, users: renderUsers, logs: renderLogs, settings: renderSettings };
+const pages = { status: renderStatus, devices: renderDevices, logs: renderLogs, settings: renderSettings };
 
 async function loadSession() {
   session = await api('GET', '/session');
@@ -210,8 +209,7 @@ async function renderStatus() {
   const refresh = async () => {
     let s;
     try { s = await api('GET', '/status'); } catch (e) { if (e.status !== 401) body.replaceChildren(h('div', { class: 'notice err', text: e.message })); return; }
-    fill(head, h('h1', { text: 'Status' }),
-      h('span', { class: 'badge ' + (s.authEnabled ? 'ok' : ''), text: s.authEnabled ? 'Anmeldung aktiv' : 'Anmeldung aus' }));
+    fill(head, h('h1', { text: 'Status' }));
 
     const now = performance.now();
     const cards = s.devices.map((d) => {
@@ -407,97 +405,6 @@ async function renderDevices() {
     h('div', { class: 'buttons' }, save));
 }
 
-// ------------------------------------------------------------------ users
-
-async function renderUsers() {
-  let users, devices, auth;
-  try {
-    [users, devices, auth] = await Promise.all([api('GET', '/users'), api('GET', '/devices'), api('GET', '/settings/auth')]);
-  } catch (e) { if (e.status !== 401) setPage(h('div', { class: 'notice err', text: e.message })); return; }
-
-  const deviceName = (serial) => devices.find((d) => d.serial === serial)?.name || serial;
-  const editor = h('div');
-
-  const openEditor = (user) => {
-    const isNew = !user;
-    const model = user ? { ...user, devices: [...user.devices], password: '' } : { name: '', enabled: true, devices: ['*'], password: '' };
-    const name = h('input', { type: 'text', value: model.name, disabled: !isNew, maxlength: 64, autocomplete: 'off', oninput: (e) => { model.name = e.target.value.trim(); } });
-    const pw = h('input', { type: 'password', autocomplete: 'new-password', oninput: (e) => { model.password = e.target.value; } });
-
-    const checks = h('div', { class: 'checks' });
-    const drawChecks = () => {
-      const all = model.devices.includes('*');
-      checks.replaceChildren(
-        h('label', {}, h('input', { type: 'checkbox', checked: all, onchange: (e) => { model.devices = e.target.checked ? ['*'] : []; drawChecks(); } }), 'Alle Sticks'),
-        ...devices.filter((d) => d.serial).map((d) => h('label', {},
-          h('input', {
-            type: 'checkbox', checked: all || model.devices.includes(d.serial), disabled: all,
-            onchange: (e) => {
-              model.devices = model.devices.filter((x) => x !== d.serial);
-              if (e.target.checked) model.devices.push(d.serial);
-            },
-          }), `${d.name} (Port ${d.port})`)));
-    };
-    drawChecks();
-
-    const save = h('button', {
-      class: 'btn primary', type: 'submit', text: isNew ? 'Benutzer anlegen' : 'Speichern',
-    });
-    editor.replaceChildren(h('form', {
-      class: 'card',
-      onsubmit: (e) => {
-        e.preventDefault();
-        guarded(save, async () => {
-          const body = { name: model.name, enabled: model.enabled, devices: model.devices, password: model.password || null };
-          if (isNew) await api('POST', '/users', body);
-          else await api('PUT', `/users/${encodeURIComponent(model.name)}`, body);
-          toast(isNew ? 'Benutzer angelegt' : 'Gespeichert');
-          renderUsers();
-        });
-      },
-    },
-    h('div', { class: 'card-head' }, h('h3', { text: isNew ? 'Neuer Stream-Benutzer' : `Benutzer „${model.name}“ bearbeiten` }),
-      switchEl(model.enabled, (v) => { model.enabled = v; }, 'freigegeben')),
-    h('div', { class: 'form-grid' },
-      field('Benutzername', name),
-      field(isNew ? 'Passwort' : 'Neues Passwort', pw, isNew ? 'mindestens 8 Zeichen' : 'leer lassen = unverändert')),
-    h('h3', { class: 'section-title', text: 'Darf diese Sticks nutzen' }),
-    checks,
-    h('div', { class: 'buttons' }, save,
-      h('button', { class: 'btn', type: 'button', text: 'Abbrechen', onclick: () => editor.replaceChildren() }))));
-    (isNew ? name : pw).focus();
-  };
-
-  const rows = users.map((u) => h('tr', {},
-    h('td', { text: u.name }),
-    h('td', {}, h('span', { class: 'badge ' + (u.enabled ? 'ok' : ''), text: u.enabled ? 'freigegeben' : 'gesperrt' })),
-    h('td', { text: u.devices.includes('*') ? 'alle' : (u.devices.map(deviceName).join(', ') || 'keine') }),
-    h('td', { class: 'actions' },
-      h('button', { class: 'btn small', text: 'Bearbeiten', onclick: () => openEditor(u) }), ' ',
-      h('button', {
-        class: 'btn small danger', text: 'Löschen',
-        onclick: (e) => guarded(e.target, async () => {
-          if (!confirm(`Benutzer „${u.name}“ löschen?`)) return;
-          await api('DELETE', `/users/${encodeURIComponent(u.name)}`);
-          toast('Benutzer gelöscht');
-          renderUsers();
-        }),
-      }))));
-
-  setPage(
-    h('div', { class: 'page-head' }, h('h1', { text: 'Benutzer' }),
-      h('button', { class: 'btn', text: '+ Benutzer anlegen', onclick: () => openEditor(null) })),
-    h('p', { class: 'lead', text: 'Stream-Benutzer melden sich über rtltcp_v2 an (z. B. home.radio). Sie gelten nur, wenn die Anmeldung unter Einstellungen aktiv ist.' }),
-    auth.enabled ? null : h('div', { class: 'notice' }, h('p', {}, 'Die Anmeldung ist derzeit ',
-      h('strong', { text: 'aus' }), ' – alle Clients dürfen ohne Benutzer streamen. ', h('a', { href: '#/settings', text: 'Einstellungen' }))),
-    editor,
-    users.length
-      ? h('div', { class: 'card table-scroll' }, h('table', {},
-        h('thead', {}, h('tr', {}, h('th', { text: 'Name' }), h('th', { text: 'Status' }), h('th', { text: 'Sticks' }), h('th'))),
-        h('tbody', {}, rows)))
-      : h('div', { class: 'card muted', text: 'Noch keine Stream-Benutzer angelegt.' }));
-}
-
 // ------------------------------------------------------------------ logs
 
 async function renderLogs() {
@@ -639,9 +546,9 @@ function updateCard(u) {
 // ------------------------------------------------------------------ settings
 
 async function renderSettings() {
-  let auth, logging, update, remote, status, devices, inst;
+  let logging, update, remote, status, devices, inst;
   try {
-    [auth, logging, update, remote, status, devices, inst] = await Promise.all([api('GET', '/settings/auth'), api('GET', '/settings/logging'),
+    [logging, update, remote, status, devices, inst] = await Promise.all([api('GET', '/settings/logging'),
       api('GET', '/update'), api('GET', '/settings/remote'), api('GET', '/status'), api('GET', '/devices'), api('GET', '/remote/instances')]);
   } catch (e) { if (e.status !== 401) setPage(h('div', { class: 'notice err', text: e.message })); return; }
 
@@ -760,26 +667,6 @@ async function renderSettings() {
   h('div', { class: 'form-grid' }, field('Aufbewahren (Tage)', days, '1–365, Standard 14')),
   h('div', { class: 'buttons' }, saveLog));
 
-  const nets = h('textarea', { spellcheck: 'false' });
-  nets.value = auth.trustedNetworks.join('\n');
-  const saveAuth = h('button', { class: 'btn primary', type: 'submit', text: 'Speichern' });
-  const authForm = h('form', {
-    class: 'card',
-    onsubmit: (e) => {
-      e.preventDefault();
-      guarded(saveAuth, async () => {
-        await api('PUT', '/settings/auth', { enabled: auth.enabled, trustedNetworks: nets.value.split(/\s+/).filter(Boolean) });
-        toast('Gespeichert – gilt ab der nächsten Verbindung');
-      });
-    },
-  },
-  h('div', { class: 'card-head' }, h('h3', { text: 'Anmeldung für Stream-Clients' }),
-    switchEl(auth.enabled, (v) => { auth.enabled = v; }, 'verlangen')),
-  h('p', { class: 'muted', text: 'Ist die Anmeldung aktiv, müssen sich Clients außerhalb der vertrauenswürdigen Netze mit einem Stream-Benutzer anmelden (rtltcp_v2). Alte rtl_tcp-Clients (v1) werden von dort abgewiesen, v2-Clients ohne Anmeldung bekommen die Meldung „Authentication required“.' }),
-  field('Vertrauenswürdige Netze (ohne Anmeldung)', nets, 'ein Netz pro Zeile, z. B. 192.168.0.0/16 – leer = alle müssen sich anmelden'),
-  h('div', { class: 'buttons' }, saveAuth,
-    h('button', { class: 'btn', type: 'button', text: 'Private Netze (Standard)', onclick: () => { nets.value = DEFAULT_NETS.join('\n'); } })));
-
   const cur = h('input', { type: 'password', autocomplete: 'current-password', required: true });
   const pw = h('input', { type: 'password', autocomplete: 'new-password', required: true, minlength: 8 });
   const pw2 = h('input', { type: 'password', autocomplete: 'new-password', required: true });
@@ -801,7 +688,7 @@ async function renderSettings() {
     field('Aktuelles Passwort', cur), field('Neues Passwort', pw, 'mindestens 8 Zeichen'), field('Wiederholen', pw2)),
   h('div', { class: 'buttons' }, savePw));
 
-  setPage(h('div', { class: 'page-head' }, h('h1', { text: 'Einstellungen' })), updateCard(update), authForm, instForm, remoteForm, logForm,
+  setPage(h('div', { class: 'page-head' }, h('h1', { text: 'Einstellungen' })), updateCard(update), instForm, remoteForm, logForm,
     session.ingress ? null : pwForm);
 }
 

@@ -25,13 +25,13 @@ src/
     Device/DeviceManager.cs   Zustandsautomat je Stick, Idle-Abschaltung, Reconnect
     Protocol/V1.cs            RTL0-Header, 5-Byte-Kommandos
     Protocol/V2.cs            HELLO, Frames, JSON-Nachrichten
-    Auth/Scram.cs             SCRAM-SHA-256, Benutzer, vertrauenswürdige Netze
+    Remote/                   Teilen über das Internet: QUIC, Zertifikat, Steuerkanal zu rtl.over.internet
     Server/StreamServer.cs    TCP-Listener je Gerät, Sitzungen, Eigentümer-Regel
   RtlTcp.Usb.LibUsb/        IUsbTransport über libusb (Windows, Linux, macOS)
   RtlTcp.Server/            Host: Dienst (Windows-Service/systemd), Kestrel, Web-GUI (wwwroot), REST-API, Updater
   RtlTcp.Android/           später: .NET-for-Android-App, IUsbTransport über die Android-USB-Host-API
 tests/
-  RtlTcp.Core.Tests/        Protokoll, Auth, Zustandsautomat (mit Fake-Transport, ohne Hardware)
+  RtlTcp.Core.Tests/        Protokoll, Zustandsautomat, Teilen über QUIC (mit Fake-Transport, ohne Hardware)
 ```
 
 ## Gerätezustände (je Stick)
@@ -61,11 +61,6 @@ tests/
 ```json
 {
   "web": { "bind": "0.0.0.0", "port": 8080 },
-  "auth": {
-    "enabled": false,
-    "trustedNetworks": ["127.0.0.0/8", "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16",
-                        "::1/128", "fc00::/7", "fe80::/10"]
-  },
   "devices": [
     { "serial": "00000001", "name": "Dach-Antenne", "bind": "0.0.0.0", "port": 1234,
       "idleTimeoutSeconds": 30, "idleCommand": null, "v1WaitForDeviceSeconds": 10,
@@ -74,17 +69,16 @@ tests/
 }
 ```
 
-Benutzer liegen getrennt in `users.json`: Web-Admins mit Passwort-Hash (PBKDF2) sowie Stream-Benutzer mit
-SCRAM-Schlüsseln, Status aktiv/gesperrt und den freigegebenen Geräten.
+Web-Admins liegen getrennt in `users.json` (Passwort-Hash PBKDF2). Stream-Clients melden sich nicht an: Sie verbinden
+sich lokal, den Weg über das Internet übernehmen die Server untereinander (siehe [remote-sharing.md](remote-sharing.md)).
 
 ## Web-GUI
 
-- **Ersteinrichtung:** Solange kein Admin existiert, zeigt jede Seite nur „Admin anlegen“, und zwar nur
-  aus vertrauenswürdigen Netzen.
-- Die Web-GUI braucht **immer** einen Login (Cookie-Auth). Die Ausnahme für vertrauenswürdige Netze gilt nur
-  für den Stream.
-- Seiten: Status (je Stick: Zustand, Client-IP, Datenrate, Trennen; live über SignalR oder SSE), Geräte,
-  Benutzer, Netzwerk/Auth, Update, Log.
+- **Ersteinrichtung:** `admin` / `admin`, das Passwort muss beim ersten Login geändert werden. Das
+  Standardpasswort gilt nur aus privaten Netzen.
+- Die Web-GUI braucht **immer** einen Login (Cookie-Auth). Stream-Clients melden sich nicht an.
+- Seiten: Status (je Stick: Zustand, Client, Datenrate, Trennen), Geräte (USB-Sticks und entfernte Sticks),
+  Protokoll, Einstellungen (Teilen über rtl.over.internet, Update, Log, Admin-Passwort).
 - Statisches HTML/JS/CSS in `wwwroot`, eingebettet ins Binary. Design und Farben wie jaycloud.at.
 
 ## Plattformen und Auslieferung

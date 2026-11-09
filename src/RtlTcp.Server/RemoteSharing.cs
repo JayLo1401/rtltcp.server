@@ -1,7 +1,6 @@
 using System.Net;
 using System.Net.Quic;
 using System.Text.Json;
-using RtlTcp.Core.Auth;
 using RtlTcp.Core.Config;
 using RtlTcp.Core.Device;
 using RtlTcp.Core.Remote;
@@ -85,7 +84,7 @@ public sealed class RemoteSharing(string dataDir, ILoggerFactory loggers) : IDis
 
     // ---------------------------------------------------------------- start / stop
 
-    public async Task StartAsync(ServerConfig cfg, IStreamUserStore users, string version, IReadOnlyList<DeviceManager> managers)
+    public async Task StartAsync(ServerConfig cfg, string version, IReadOnlyList<DeviceManager> managers)
     {
         ListenError = null;
         if (!Supported || _identity is null) return;
@@ -100,7 +99,7 @@ public sealed class RemoteSharing(string dataDir, ILoggerFactory loggers) : IDis
             try
             {
                 var bind = IPAddress.TryParse(r.Bind, out var a) ? a : IPAddress.IPv6Any;
-                var host = new ShareHost(new IPEndPoint(bind, r.ListenPort), _identity, () => r.Peers, Find, users, version, _log);
+                var host = new ShareHost(new IPEndPoint(bind, r.ListenPort), _identity, () => r.Peers, Find, version, _log);
                 await host.StartAsync();
                 _host = host;
             }
@@ -120,7 +119,7 @@ public sealed class RemoteSharing(string dataDir, ILoggerFactory loggers) : IDis
             var provider = new BrokerClient.Provider(
                 () => [.. shared.Select(s => (Serial: s, Manager: Find(s))).Where(x => x.Manager is not null)
                     .Select(x => new AnnouncedShare(x.Serial, x.Manager!.Config.Name, x.Manager.Tuner?.Name ?? "", StateOf(x.Manager)))],
-                s => shared.Contains(s) ? Find(s) : null, users);
+                s => shared.Contains(s) ? Find(s) : null);
             var client = new BrokerClient(new BrokerClient.Options(inst.Url, token, ServerNameOf(r), version), _identity, provider,
                 loggers.CreateLogger($"instance.{(inst.Name.Length > 0 ? inst.Name : inst.Id)}"));
             client.Start();

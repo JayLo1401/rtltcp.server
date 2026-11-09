@@ -2,7 +2,8 @@
 
 Stellt RTL-SDR-Sticks, die an Home Assistant hängen, im Netzwerk bereit. Der Server ist voll kompatibel zu
 `rtl_tcp`, SDR++, SDR#, GQRX und home.radio funktionieren also ohne Änderung. Dazu kommen Auto-Reconnect,
-Idle-Abschaltung und das Protokoll rtltcp_v2 mit Statusmeldungen und optionaler Anmeldung.
+Idle-Abschaltung, das Protokoll rtl_tcp Jay extended mit Statusmeldungen und das Teilen von Sticks mit anderen
+Standorten über rtl.over.internet (ohne VPN und ohne Portfreigabe).
 
 ## Einrichtung
 
@@ -16,7 +17,7 @@ Im Client (z. B. SDR++ → Quelle „RTL-TCP“) die Adresse des Home-Assistant-
 
 - **Status:** Zustand jedes Sticks, verbundener Client, Frequenz, Datenrate. Clients lassen sich trennen.
 - **Geräte:** Ports, Stick-Zuordnung (Seriennummer), Abschaltzeit, Standardwerte (Frequenz, Samplerate, Gain, Bias-Tee).
-- **Benutzer / Einstellungen:** Stream-Benutzer und Anmeldung für Clients von außen (rtltcp_v2), vertrauenswürdige Netze.
+- **Einstellungen:** Sticks über rtl.over.internet teilen (Instanz hinzufügen, Sticks freigeben), Update, Protokoll, Admin-Passwort.
 - **Protokoll:** Logs der letzten 14 Tage (einstellbar).
 
 Die Weboberfläche ist zusätzlich direkt unter `http://<home-assistant>:8099/` erreichbar. Dort gilt der eigene

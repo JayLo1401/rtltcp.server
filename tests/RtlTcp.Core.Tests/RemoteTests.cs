@@ -1,7 +1,6 @@
 using System.Net;
 using System.Net.Quic;
 using Microsoft.Extensions.Logging.Abstractions;
-using RtlTcp.Core.Auth;
 using RtlTcp.Core.Config;
 using RtlTcp.Core.Device;
 using RtlTcp.Core.Protocol;
@@ -24,7 +23,6 @@ public sealed class RemoteTests : IAsyncLifetime
     private static readonly PeerIdentity Site2 = PeerIdentity.CreateEphemeral("site2");
 
     private readonly FakeSource _stick = new();
-    private readonly FakeUsers _users = new();
     private readonly List<RemotePeerConfig> _peers =
         [new RemotePeerConfig { Name = "Standort 2", Fingerprint = Site2.Fingerprint, Devices = [Share] }];
 
@@ -45,7 +43,7 @@ public sealed class RemoteTests : IAsyncLifetime
             Serial = Share, Name = "Standort1 Stick 1", Bind = "127.0.0.1", Port = 0, IdleTimeoutSeconds = 1,
         }, _stick, NullLogger.Instance);
         _host = new ShareHost(new IPEndPoint(IPAddress.Loopback, 0), Site1, () => _peers,
-            s => s == Share ? _provider : null, _users, "test", NullLogger.Instance);
+            s => s == Share ? _provider : null, "test", NullLogger.Instance);
         await _host.StartAsync();
     }
 
@@ -60,7 +58,7 @@ public sealed class RemoteTests : IAsyncLifetime
             Name = "Remote", Bind = "127.0.0.1", Port = 0, IdleTimeoutSeconds = 0, V1WaitForDeviceSeconds = 5, Remote = remote,
             Defaults = new DeviceDefaults { Frequency = 92_600_000, SampleRate = 2_400_000, Gain = 144 },
         }, new RemoteDeviceSource(remote, identity ?? Site2, NullLogger.Instance), NullLogger.Instance);
-        _consumerServer = new StreamServer(_consumer, () => new AccessPolicy(false, []), _users, "test", NullLogger.Instance);
+        _consumerServer = new StreamServer(_consumer, "test", NullLogger.Instance);
         _consumerServer.Start();
         return _consumerServer.LocalEndPoint!.Port;
     }
@@ -187,7 +185,7 @@ public sealed class RemoteTests : IAsyncLifetime
     public async Task Busy_at_the_provider_names_the_owner()
     {
         if (!Supported) return;
-        _localServer = new StreamServer(_provider, () => new AccessPolicy(false, []), _users, "test", NullLogger.Instance);
+        _localServer = new StreamServer(_provider, "test", NullLogger.Instance);
         _localServer.Start();
         await using var local = await TestClient.ConnectAsync(_localServer.LocalEndPoint!.Port);
         await local.ReadAsync(V1.HeaderSize);

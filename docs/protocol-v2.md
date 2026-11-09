@@ -1,15 +1,19 @@
 # rtltcp_v2 – Protocol Specification
 
-Status: **Draft 0.1** · Applies to: rtltcp.server ≥ 0.1, clients (e.g. home.radio)
+Status: **Draft 0.2** · Applies to: rtltcp.server ≥ 1.6, clients (e.g. home.radio)
 
-rtltcp_v2 extends the classic `rtl_tcp` protocol (here called **v1**) with:
+Names: **rtl_tcp** = v1, **rtl_tcp Jay extended** = v2 (on the wire still `RTL2` / `HELLO_V2`).
+
+rtl_tcp Jay extended (v2) extends the classic `rtl_tcp` protocol (here called **v1**) with:
 
 1. clear status and error messages from the server (device not ready, busy, device lost/restored …),
-2. optional user authentication,
-3. full backward compatibility in both directions:
-   - a **v1 client** talking to an rtltcp.server behaves exactly as with the classic `rtl_tcp`
-     (as long as the client needs no authentication, see §6),
+2. full backward compatibility in both directions:
+   - a **v1 client** talking to an rtltcp.server behaves exactly as with the classic `rtl_tcp`,
    - a **v2 client** talking to a classic `rtl_tcp` server detects this and falls back to v1.
+
+There is **no client authentication**. Earlier drafts had an optional SCRAM login; it was removed in
+rtltcp.server 1.6. Access over the internet is handled between rtltcp.server installations (rtl.over.internet),
+clients only connect locally. Clients should always send HELLO and show which protocol the server answered with.
 
 All multi-byte integers are **big-endian** (network byte order), as in v1.
 
@@ -72,7 +76,7 @@ The client reads the first 4 bytes:
 
 - `"RTL2"` → v2 session.
 - `"RTL0"` → the server is classic `rtl_tcp` (or v2 disabled). Read the remaining 8 header bytes and continue as v1.
-- Connection closed without data → server refused (busy / auth required / not ready); v2 clients should show a generic error.
+- Connection closed without data → server refused (busy / not ready); v2 clients should show a generic error.
 
 ---
 
@@ -83,7 +87,7 @@ The client reads the first 4 bytes:
 ```
 char[4] "RTL2"
 u16     protocol_version   (1)
-u16     flags              (bit 0: auth required for this client)
+u16     flags              (0; bit 0 was "auth required" in Draft 0.1, never set any more)
 u32     reserved           (0)
 ```
 
@@ -106,8 +110,7 @@ u8[] payload
 Receivers must skip frames with unknown `type` (read `length` bytes and discard).
 IQ frames are typically 16–64 KiB; overhead is < 0.05 %.
 
-The server only sends IQ frames after the session is **authorized** (§4.2) and the client
-**owns** the device (§4.3).
+The server only sends IQ frames while the client **owns** the device (§6) and the device is `ready` (§4.2).
 
 ---
 
@@ -122,54 +125,17 @@ message types must be ignored.
 {
   "type": "server_info",
   "server": "rtltcp.server",
-  "version": "0.1.0",
+  "version": "1.6.0",
   "device": { "name": "Dach-Antenne", "serial": "00000001" },
-  "auth": "required"            // or "none"
+  "auth": "none"
 }
 ```
 
-### 4.2 Authentication
+`auth` is always `"none"` (kept for clients written against Draft 0.1).
 
-Only when `auth == "required"`. Mechanism: **SCRAM-SHA-256** style (RFC 7677 math, own JSON
-framing). The password is never transmitted and the server stores no password-equivalent.
+### 4.2 `status` (S → C)
 
-```
-C → S  { "type": "auth_start",     "user": "jay", "cnonce": "<base64, 18+ bytes>" }
-S → C  { "type": "auth_challenge", "nonce": "<cnonce + snonce, base64>",
-         "salt": "<base64>", "iterations": 100000 }
-C → S  { "type": "auth_proof",     "proof": "<base64>" }
-S → C  { "type": "auth_ok",        "signature": "<base64>" }     // server signature, client should verify
-   or  { "type": "error", "code": "AUTH_FAILED", "message": "Authentication failed" }  → server closes
-```
-
-Computation (all HMAC/H = SHA-256):
-
-```
-SaltedPassword = PBKDF2-HMAC-SHA256(password, salt, iterations)
-ClientKey      = HMAC(SaltedPassword, "Client Key")
-StoredKey      = H(ClientKey)
-ServerKey      = HMAC(SaltedPassword, "Server Key")
-AuthMessage    = user + "," + cnonce + "," + nonce + "," + salt + "," + iterations   (base64 strings, decimal iterations)
-ClientProof    = ClientKey XOR HMAC(StoredKey, AuthMessage)
-ServerSignature= HMAC(ServerKey, AuthMessage)
-```
-
-**Client without credentials.** If `server_info.auth == "required"` but the user has not configured credentials,
-the client should tell the user ("Server requires authentication") and disconnect. The server enforces this anyway:
-any message other than `auth_start` – or nothing within **10 s** – is answered with
-`{"type":"error","code":"AUTH_REQUIRED","message":"Authentication required: …","fatal":true}` and the connection is closed.
-
-The server stores only `salt`, `iterations`, `StoredKey`, `ServerKey` per user.
-For unknown users the server answers with a deterministic fake salt (no user enumeration).
-Users must be **enabled** and **permitted for this device** in the web GUI; otherwise `AUTH_FAILED`
-(the reason is only logged on the server side).
-
-Without TLS the session is authenticated but **not encrypted** (IQ data is visible on the
-network). TLS is a possible future extension.
-
-### 4.3 `status` (S → C)
-
-Sent after authorization and whenever the state changes.
+Sent right after `server_info` and whenever the state changes.
 
 ```json
 {
@@ -193,7 +159,7 @@ Sent after authorization and whenever the state changes.
 
 The session **stays open** in all these states; the server retries and reports changes.
 
-### 4.4 `error` (S → C)
+### 4.3 `error` (S → C)
 
 ```json
 { "type": "error", "code": "BUSY", "message": "Server already in use by 192.168.1.20",
@@ -203,15 +169,14 @@ The session **stays open** in all these states; the server retries and reports c
 | code               | fatal | meaning                                                      |
 |--------------------|-------|--------------------------------------------------------------|
 | `BUSY`             | yes   | another client owns the device (first come, first served)    |
-| `AUTH_REQUIRED`    | yes   | client tried to proceed without auth                         |
-| `AUTH_FAILED`      | yes   | wrong credentials / user disabled / no permission            |
 | `KICKED`           | yes   | an administrator disconnected the session                    |
 | `INVALID_COMMAND`  | no    | command rejected (e.g. unsupported sample rate)              |
 | `PROTOCOL_ERROR`   | yes   | malformed frame                                              |
 
-After a fatal error the server closes the connection.
+After a fatal error the server closes the connection. (`AUTH_REQUIRED` / `AUTH_FAILED` from Draft 0.1 are no
+longer sent.)
 
-### 4.5 `ping` / `pong` (both directions, optional)
+### 4.4 `ping` / `pong` (both directions, optional)
 
 `{ "type": "ping", "id": 1 }` → `{ "type": "pong", "id": 1 }`
 
@@ -232,53 +197,22 @@ A v1 client gets exactly the classic behaviour:
 
 ---
 
-## 6. Authentication policy and trusted networks
-
-Per server (configurable in the web GUI):
-
-| setting            | effect                                                                         |
-|--------------------|--------------------------------------------------------------------------------|
-| `auth.enabled`     | `false`: nobody authenticates, v1 and v2 work for everyone                     |
-| `auth.trusted_networks` | list of CIDRs; clients from these networks never need auth              |
-
-Decision per connection:
-
-```
-if not auth.enabled or client_ip in trusted_networks:
-    v1 allowed, v2 with auth = "none"
-else:
-    v1 → connection closed
-    v2 → auth = "required"
-```
-
-Default `trusted_networks` (pre-filled when auth is enabled, editable):
-`127.0.0.0/8, 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, ::1/128, fc00::/7, fe80::/10`.
-
-**Caveat:** if the router forwards external connections with source NAT (masquerading), they
-arrive with an internal address and would be treated as trusted. Port forwarding normally keeps
-the original address; with reverse proxies or NAT hairpinning check the log.
-
----
-
-## 7. Device ownership
+## 6. Device ownership
 
 - One device = one TCP port = at most **one owner**.
-- First connected client owns it until it disconnects ("first come, first served").
-- Further clients: v2 → `BUSY` with the owner's IP, v1 → closed.
+- First connected client owns it until it disconnects ("first come, first served"). This includes clients at
+  other sites that use the stick over rtl.over.internet.
+- Further clients: v2 → `BUSY` with the owner (IP, or site and instance), v1 → closed.
 - Administrators can disconnect the owner from the web GUI (owner receives `KICKED`).
 
 ---
 
-## 8. Example (v2, auth from public IP)
+## 7. Example (v2)
 
 ```
 C: F2 52 54 4C 32                                        HELLO
-S: "RTL2" 00 01 00 01 00 00 00 00                        header, auth flag set
-S: [02][len]{"type":"server_info",…,"auth":"required"}
-C: [02][len]{"type":"auth_start","user":"jay","cnonce":"…"}
-S: [02][len]{"type":"auth_challenge",…}
-C: [02][len]{"type":"auth_proof","proof":"…"}
-S: [02][len]{"type":"auth_ok","signature":"…"}
+S: "RTL2" 00 01 00 00 00 00 00 00                        header
+S: [02][len]{"type":"server_info",…,"auth":"none"}
 S: [02][len]{"type":"status","state":"starting"}
 S: [02][len]{"type":"status","state":"ready","tuner":{…}}
 C: [03][00 00 00 05] 01 05 F5 E1 00                      SET_FREQUENCY 100 MHz

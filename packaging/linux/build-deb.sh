@@ -50,7 +50,7 @@ Homepage: https://github.com/JayLo1401/rtltcp.server
 Description: rtl_tcp-compatible server for RTL-SDR sticks
  Drop-in replacement for rtl_tcp with web interface, automatic reconnect
  when the stick disappears, idle power-down, several sticks on separate ports
- and the rtltcp_v2 protocol (status messages, optional authentication).
+ and rtl_tcp Jay extended (status messages); sticks can be shared between sites.
 EOF
 
 mkdir -p "$OUT"

@@ -1,6 +1,5 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
-using RtlTcp.Core.Auth;
 
 namespace RtlTcp.Core.Config;
 
@@ -10,7 +9,6 @@ public sealed class ServerConfig
 
     /// <summary>Port of the first stick; further sticks get the following ports. Chosen during installation.</summary>
     public int StreamBasePort { get; set; } = 1234;
-    public AuthConfig Auth { get; set; } = new();
     public LogConfig Logging { get; set; } = new();
     public UpdateConfig Update { get; set; } = new();
     public RemoteConfig Remote { get; set; } = new();
@@ -66,12 +64,6 @@ public sealed class LogConfig
 
     /// <summary>Also log each IQ connection's details at debug level.</summary>
     public bool Debug { get; set; }
-}
-
-public sealed class AuthConfig
-{
-    public bool Enabled { get; set; }
-    public List<string> TrustedNetworks { get; set; } = [.. AccessPolicy.DefaultTrustedNetworks];
 }
 
 public sealed class DeviceConfig

@@ -1,5 +1,4 @@
 using Microsoft.Extensions.Logging.Abstractions;
-using RtlTcp.Core.Auth;
 using RtlTcp.Core.Config;
 using RtlTcp.Core.Device;
 using RtlTcp.Core.Protocol;
@@ -10,8 +9,6 @@ namespace RtlTcp.Core.Tests;
 public sealed class ServerTests : IAsyncLifetime
 {
     private readonly FakeSource _source = new();
-    private readonly FakeUsers _users = new();
-    private AccessPolicy _policy = new(authEnabled: false, AccessPolicy.DefaultTrustedNetworks);
     private DeviceManager _manager = null!;
     private StreamServer _server = null!;
 
@@ -26,7 +23,7 @@ public sealed class ServerTests : IAsyncLifetime
     public Task InitializeAsync()
     {
         _manager = new DeviceManager(_config, _source, NullLogger.Instance);
-        _server = new StreamServer(_manager, () => _policy, _users, "test", NullLogger.Instance);
+        _server = new StreamServer(_manager, "test", NullLogger.Instance);
         _server.Start();
         return Task.CompletedTask;
     }
@@ -75,14 +72,6 @@ public sealed class ServerTests : IAsyncLifetime
         await first.ReadAsync(V1.HeaderSize);
         await using var second = await TestClient.ConnectAsync(Port);
         Assert.True(await second.IsClosedAsync());
-    }
-
-    [Fact]
-    public async Task V1_client_is_closed_when_auth_is_required()
-    {
-        _policy = new AccessPolicy(authEnabled: true, []);
-        await using var c = await TestClient.ConnectAsync(Port);
-        Assert.True(await c.IsClosedAsync());
     }
 
     [Fact]
@@ -232,78 +221,9 @@ public sealed class ServerTests : IAsyncLifetime
         await Eventually(() => _manager.Owner is null);
     }
 
-    // ---------------------------------------------------------------- auth
-
-    private async Task<TestClient> ConnectWithAuthAsync()
-    {
-        _policy = new AccessPolicy(authEnabled: true, []);
-        _users.Users["jay"] = ScramCredentials.Create("geheim", iterations: 1000);
-        var c = await TestClient.ConnectAsync(Port);
-        await c.SendHelloAsync();
-        var (_, flags) = V2.ReadHeader(await c.ReadAsync(V2.HeaderSize));
-        Assert.Equal(V2HeaderFlags.AuthRequired, flags);
-        Assert.Equal("required", (await c.ExpectAsync<ServerInfoMessage>()).Auth);
-        return c;
-    }
-
     [Fact]
-    public async Task V2_auth_succeeds_with_correct_password()
+    public async Task V1_client_from_any_address_is_accepted_without_login()
     {
-        await using var c = await ConnectWithAuthAsync();
-        var scram = new ScramClientSession("jay", "geheim");
-        await c.SendJsonAsync(new AuthStartMessage(scram.User, scram.Cnonce));
-        var ch = await c.ExpectAsync<AuthChallengeMessage>();
-        await c.SendJsonAsync(new AuthProofMessage(scram.Proof(ch.Nonce, ch.Salt, ch.Iterations)));
-        var ok = await c.ExpectAsync<AuthOkMessage>();
-        Assert.True(scram.VerifyServer(ok.Signature));
-        await c.ExpectAsync<StatusMessage>(s => s.State == DeviceStates.Ready);
-    }
-
-    [Fact]
-    public async Task V2_auth_fails_with_wrong_password_and_does_not_take_the_stick()
-    {
-        await using var c = await ConnectWithAuthAsync();
-        var scram = new ScramClientSession("jay", "falsch");
-        await c.SendJsonAsync(new AuthStartMessage(scram.User, scram.Cnonce));
-        var ch = await c.ExpectAsync<AuthChallengeMessage>();
-        await c.SendJsonAsync(new AuthProofMessage(scram.Proof(ch.Nonce, ch.Salt, ch.Iterations)));
-        Assert.Equal(ErrorCodes.AuthFailed, (await c.ExpectAsync<ErrorMessage>()).Code);
-        Assert.True(await c.IsClosedAsync());
-        Assert.Null(_manager.Owner);
-    }
-
-    [Fact]
-    public async Task V2_client_sending_commands_without_auth_gets_AUTH_REQUIRED_immediately()
-    {
-        await using var c = await ConnectWithAuthAsync();
-        await c.SendCommandV2Async(RtlCommand.SetFrequency, 1);
-        var error = await c.ExpectAsync<ErrorMessage>();
-        Assert.Equal(ErrorCodes.AuthRequired, error.Code);
-        Assert.StartsWith("Authentication required", error.Message);
-        Assert.True(await c.IsClosedAsync());
-        Assert.Null(_manager.Owner);
-    }
-
-    [Fact]
-    public async Task V2_client_that_stays_silent_gets_AUTH_REQUIRED_after_timeout()
-    {
-        ClientSession.AuthTimeout = TimeSpan.FromMilliseconds(300);
-        try
-        {
-            await using var c = await ConnectWithAuthAsync();
-            Assert.Equal(ErrorCodes.AuthRequired, (await c.ExpectAsync<ErrorMessage>()).Code);
-            Assert.True(await c.IsClosedAsync());
-        }
-        finally
-        {
-            ClientSession.AuthTimeout = TimeSpan.FromSeconds(10);
-        }
-    }
-
-    [Fact]
-    public async Task Trusted_network_needs_no_auth_even_when_auth_is_enabled()
-    {
-        _policy = new AccessPolicy(authEnabled: true, AccessPolicy.DefaultTrustedNetworks); // 127.0.0.1 is trusted
         await using var c = await TestClient.ConnectAsync(Port);
         Assert.Equal("RTL0"u8.ToArray(), (await c.ReadAsync(V1.HeaderSize))[..4]);
     }

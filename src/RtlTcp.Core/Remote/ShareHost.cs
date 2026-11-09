@@ -5,7 +5,6 @@ using System.Net.Security;
 using System.Runtime.Versioning;
 using System.Security.Cryptography.X509Certificates;
 using Microsoft.Extensions.Logging;
-using RtlTcp.Core.Auth;
 using RtlTcp.Core.Config;
 using RtlTcp.Core.Device;
 using RtlTcp.Core.Protocol;
@@ -23,16 +22,12 @@ namespace RtlTcp.Core.Remote;
 [SupportedOSPlatform("macos")]
 public sealed class ShareHost : IAsyncDisposable
 {
-    /// <summary>Peers authenticate by certificate; no SCRAM on top.</summary>
-    private static readonly AccessPolicy NoAuth = new(authEnabled: false, []);
-
     private static readonly TimeSpan PreambleTimeout = TimeSpan.FromSeconds(10);
 
     private readonly IPEndPoint _endPoint;
     private readonly PeerIdentity _identity;
     private readonly Func<X509Certificate, PeerGrant?> _authorize;
     private readonly Func<string, DeviceManager?> _findDevice;
-    private readonly IStreamUserStore _users;
     private readonly string _version;
     private readonly ILogger _log;
     private readonly CancellationTokenSource _cts = new();
@@ -45,23 +40,22 @@ public sealed class ShareHost : IAsyncDisposable
 
     /// <summary>Manually configured peers (test mode), read per connection so changes apply immediately.</summary>
     public ShareHost(IPEndPoint endPoint, PeerIdentity identity, Func<IReadOnlyList<RemotePeerConfig>> peers,
-        Func<string, DeviceManager?> findDevice, IStreamUserStore users, string version, ILogger log)
+        Func<string, DeviceManager?> findDevice, string version, ILogger log)
         : this(endPoint, identity, cert => peers().FirstOrDefault(p => RemoteProtocol.FingerprintMatches(cert, p.Fingerprint)) is { } p
             ? new PeerGrant(p.Name, s => p.Devices.Contains(s, StringComparer.OrdinalIgnoreCase)) : null,
-            findDevice, users, version, log)
+            findDevice, version, log)
     {
     }
 
     /// <param name="authorize">Decides per peer certificate; null = refused in the TLS handshake.</param>
     /// <param name="findDevice">Running stick by serial (share id).</param>
     public ShareHost(IPEndPoint endPoint, PeerIdentity identity, Func<X509Certificate, PeerGrant?> authorize,
-        Func<string, DeviceManager?> findDevice, IStreamUserStore users, string version, ILogger log)
+        Func<string, DeviceManager?> findDevice, string version, ILogger log)
     {
         _endPoint = endPoint;
         _identity = identity;
         _authorize = authorize;
         _findDevice = findDevice;
-        _users = users;
         _version = version;
         _log = log;
     }
@@ -185,7 +179,7 @@ public sealed class ShareHost : IAsyncDisposable
             }
 
             var conn = new ClientConnection(stream, ip, who, stream.CompleteWrites, waitForHello: false);
-            await new ClientSession(conn, manager, NoAuth, _users, _version, _log, ct).RunAsync();
+            await new ClientSession(conn, manager, _version, _log, ct).RunAsync();
         }
         catch (Exception ex) when (ex is QuicException or IOException or OperationCanceledException
                                        or EndOfStreamException or ProtocolException) { }

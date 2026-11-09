@@ -1,6 +1,6 @@
 #!/usr/bin/with-contenv bashio
 # shellcheck shell=bash
-# Sticks, stick ports, users and authentication live in /data and are managed in the web interface.
+# Sticks, stick ports, web login and shared sticks live in /data and are managed in the web interface.
 # The environment is set here explicitly: s6-overlay does not hand the Dockerfile ENV to this script.
 
 # Requests from the HA ingress proxy count as logged in. The ingress port is chosen by the Supervisor.

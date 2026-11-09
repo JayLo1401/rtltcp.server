@@ -9,7 +9,6 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using Microsoft.Extensions.Logging;
-using RtlTcp.Core.Auth;
 using RtlTcp.Core.Device;
 
 namespace RtlTcp.Core.Remote.Broker;
@@ -40,8 +39,7 @@ public sealed class BrokerClient : IAsyncDisposable
     public sealed record Options(string Url, string Token, string ServerName, string Version);
 
     /// <summary>Things this server shares and how to serve them (provider side).</summary>
-    public sealed record Provider(Func<IReadOnlyList<AnnouncedShare>> Shares, Func<string, DeviceManager?> FindDevice,
-        IStreamUserStore Users);
+    public sealed record Provider(Func<IReadOnlyList<AnnouncedShare>> Shares, Func<string, DeviceManager?> FindDevice);
 
     private static readonly TimeSpan GatherTimeout = TimeSpan.FromSeconds(1.5);
     private static readonly TimeSpan PunchWait = TimeSpan.FromSeconds(12);
@@ -571,7 +569,7 @@ public sealed class BrokerClient : IAsyncDisposable
             var name = $"{s.PeerName} via {InstanceName}";
             host = new ShareHost(new IPEndPoint(IPAddress.IPv6Any, port), _identity,
                 cert => RemoteProtocol.FingerprintMatches(cert, s.PeerFp) ? new ShareHost.PeerGrant(name, shared.Contains) : null,
-                _provider.FindDevice, _provider.Users, _options.Version, _log);
+                _provider.FindDevice, _options.Version, _log);
             var closed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
             host.ConnectionClosed += () => closed.TrySetResult();
             await host.StartAsync();

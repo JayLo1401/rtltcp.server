@@ -29,11 +29,11 @@ public readonly record struct FrameHeader(FrameType Type, int Length)
     }
 }
 
+/// <summary>Header flags. Bit 0 meant "authentication required" in earlier versions and is always 0 now.</summary>
 [Flags]
 public enum V2HeaderFlags : ushort
 {
     None = 0,
-    AuthRequired = 1 << 0,
 }
 
 public static class V2

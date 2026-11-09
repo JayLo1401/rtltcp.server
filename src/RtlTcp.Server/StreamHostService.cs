@@ -1,5 +1,4 @@
 using System.Reflection;
-using RtlTcp.Core.Auth;
 using RtlTcp.Core.Config;
 using RtlTcp.Core.Device;
 using RtlTcp.Core.Server;
@@ -9,7 +8,7 @@ using RtlTcp.Usb.LibUsb;
 namespace RtlTcp.Server;
 
 /// <summary>Starts one DeviceManager + StreamServer per configured stick; can restart them after config changes.</summary>
-public sealed class StreamHostService(ServerConfigHolder config, UserStore users, ILoggerFactory loggers) : IHostedService
+public sealed class StreamHostService(ServerConfigHolder config, ILoggerFactory loggers) : IHostedService
 {
     public static string Version { get; } =
         typeof(StreamHostService).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion
@@ -71,7 +70,7 @@ public sealed class StreamHostService(ServerConfigHolder config, UserStore users
             var others = cfg.Devices.Where(d => d != dc && d.Serial.Length > 0 && d.Remote is null).Select(d => d.Serial).ToArray();
             var source = dc.Remote is { } remote ? _remote.SourceFor(remote, loggers.CreateLogger($"remote.{dc.Port}")) : _source!;
             var manager = new DeviceManager(dc, source, loggers.CreateLogger($"device.{dc.Port}"), () => others);
-            var server = new StreamServer(manager, () => config.Policy, users, Version, loggers.CreateLogger($"stream.{dc.Port}"));
+            var server = new StreamServer(manager, Version, loggers.CreateLogger($"stream.{dc.Port}"));
             try
             {
                 server.Start();
@@ -86,7 +85,7 @@ public sealed class StreamHostService(ServerConfigHolder config, UserStore users
         }
         _devices = started;
         StartErrors = errors;
-        await _remote.StartAsync(cfg, users, Version, [.. started.Select(d => d.Item1)]);
+        await _remote.StartAsync(cfg, Version, [.. started.Select(d => d.Item1)]);
     }
 
     private async Task StopDevicesAsync()
@@ -143,22 +142,17 @@ public sealed class ServerConfigHolder
         DataDir = dataDir;
         ConfigPath = Path.Combine(dataDir, "config.json");
         Current = ServerConfig.Load(ConfigPath);
-        Policy = BuildPolicy();
     }
 
     public string DataDir { get; }
     public string ConfigPath { get; }
     public ServerConfig Current { get; private set; }
 
-    /// <summary>Read per stream connection, so auth changes apply to the next connection without restart.</summary>
-    public AccessPolicy Policy { get; private set; }
-
     public void Save()
     {
         lock (_lock)
         {
             Current.Save(ConfigPath);
-            Policy = BuildPolicy();
         }
     }
 
@@ -171,9 +165,6 @@ public sealed class ServerConfigHolder
             change(copy);
             copy.Save(ConfigPath);
             Current = copy;
-            Policy = BuildPolicy();
         }
     }
-
-    private AccessPolicy BuildPolicy() => new(Current.Auth.Enabled, Current.Auth.TrustedNetworks);
 }

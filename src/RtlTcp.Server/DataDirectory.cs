@@ -1,6 +1,6 @@
 namespace RtlTcp.Server;
 
-/// <summary>Where config.json, users.json and the server secret live.</summary>
+/// <summary>Where config.json, users.json (web admins) and remote/ (certificate, tokens) live.</summary>
 public static class DataDirectory
 {
     /// <summary>

@@ -41,9 +41,9 @@ public class ProtocolTests
     public void V2_header_roundtrip()
     {
         var h = new byte[V2.HeaderSize];
-        V2.WriteHeader(h, V2HeaderFlags.AuthRequired);
-        Assert.Equal(new byte[] { 0x52, 0x54, 0x4C, 0x32, 0, 1, 0, 1, 0, 0, 0, 0 }, h);
-        Assert.Equal((V2.ProtocolVersion, V2HeaderFlags.AuthRequired), V2.ReadHeader(h));
+        V2.WriteHeader(h, V2HeaderFlags.None);
+        Assert.Equal(new byte[] { 0x52, 0x54, 0x4C, 0x32, 0, 1, 0, 0, 0, 0, 0, 0 }, h);
+        Assert.Equal((V2.ProtocolVersion, V2HeaderFlags.None), V2.ReadHeader(h));
     }
 
     [Fact]
@@ -72,15 +72,15 @@ public class ProtocolTests
     public void Error_omits_null_client()
     {
         var json = Encoding.UTF8.GetString(V2Json.Serialize(
-            new ErrorMessage(ErrorCodes.AuthFailed, "Authentication failed", true)));
+            new ErrorMessage(ErrorCodes.Kicked, "Disconnected by administrator", true)));
         Assert.DoesNotContain("client", json);
     }
 
     [Fact]
     public void Deserialize_accepts_type_not_first_and_ignores_unknown_fields()
     {
-        var msg = V2Json.Deserialize("""{"user":"jay","extra":1,"type":"auth_start","cnonce":"abc"}"""u8);
-        Assert.Equal(new AuthStartMessage("jay", "abc"), msg);
+        var msg = V2Json.Deserialize("""{"id":7,"extra":1,"type":"ping"}"""u8);
+        Assert.Equal(new PingMessage(7), msg);
     }
 
     [Theory]

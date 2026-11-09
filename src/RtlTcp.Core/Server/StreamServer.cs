@@ -2,7 +2,6 @@ using System.Collections.Concurrent;
 using System.Net;
 using System.Net.Sockets;
 using Microsoft.Extensions.Logging;
-using RtlTcp.Core.Auth;
 using RtlTcp.Core.Device;
 
 namespace RtlTcp.Core.Server;
@@ -11,8 +10,6 @@ namespace RtlTcp.Core.Server;
 public sealed class StreamServer : IAsyncDisposable
 {
     private readonly DeviceManager _manager;
-    private readonly Func<AccessPolicy> _policy;
-    private readonly IStreamUserStore _users;
     private readonly string _version;
     private readonly ILogger _log;
     private readonly CancellationTokenSource _cts = new();
@@ -20,12 +17,9 @@ public sealed class StreamServer : IAsyncDisposable
     private Socket? _listener;
     private Task? _accept;
 
-    /// <param name="policy">Called per connection so changes from the web GUI apply immediately.</param>
-    public StreamServer(DeviceManager manager, Func<AccessPolicy> policy, IStreamUserStore users, string version, ILogger log)
+    public StreamServer(DeviceManager manager, string version, ILogger log)
     {
         _manager = manager;
-        _policy = policy;
-        _users = users;
         _version = version;
         _log = log;
     }
@@ -66,7 +60,7 @@ public sealed class StreamServer : IAsyncDisposable
                 continue;
             }
 
-            var session = new ClientSession(ClientConnection.FromSocket(client), _manager, _policy(), _users, _version, _log, ct);
+            var session = new ClientSession(ClientConnection.FromSocket(client), _manager, _version, _log, ct);
             var task = Task.Run(session.RunAsync, CancellationToken.None);
             _sessions.TryAdd(task, 0);
             _ = task.ContinueWith(t => _sessions.TryRemove(t, out _), TaskScheduler.Default);

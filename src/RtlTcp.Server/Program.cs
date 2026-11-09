@@ -5,7 +5,7 @@ using RtlTcp.Server.Web;
 // CLI:
 //   rtltcp-server [--data <dir>]               run the server (web GUI on port 8080 by default)
 //   rtltcp-server --version                    print the version
-//   rtltcp-server user add <name> <password>   create/update a stream user
+//   rtltcp-server admin reset                  reset the web login to admin / admin
 if (args is ["--version" or "-v", ..])
 {
     Console.WriteLine($"rtltcp.server {StreamHostService.Version}");
@@ -13,13 +13,6 @@ if (args is ["--version" or "-v", ..])
 }
 
 var dataDir = DataDirectory.Resolve(args);
-
-if (args is ["user", "add", var name, var password, ..])
-{
-    new UserStore(dataDir).SetPassword(name, password);
-    Console.WriteLine($"Stream user '{name}' saved in {Path.Combine(dataDir, "users.json")}");
-    return;
-}
 
 if (args is ["admin", "reset", ..])
 {

@@ -1,16 +1,14 @@
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
-using RtlTcp.Core.Auth;
 
 namespace RtlTcp.Server;
 
 /// <summary>
-/// users.json: web admins (PBKDF2 hash) and stream users (SCRAM keys, enabled flag, permitted sticks). Thread-safe.
+/// users.json: web admins (PBKDF2 hash). Stream clients do not log in. Thread-safe.
 /// </summary>
-public sealed class UserStore : IStreamUserStore
+public sealed class UserStore
 {
-    public const string AllDevices = "*";
     private const int AdminIterations = 210_000;
 
     public sealed class AdminUser
@@ -27,24 +25,9 @@ public sealed class UserStore : IStreamUserStore
     public const string DefaultAdmin = "admin";
     public const string DefaultPassword = "admin";
 
-    public sealed class StreamUser
-    {
-        public string Name { get; set; } = "";
-        public bool Enabled { get; set; } = true;
-
-        /// <summary>Serials this user may use; "*" = all sticks.</summary>
-        public List<string> Devices { get; set; } = [AllDevices];
-
-        public string Salt { get; set; } = "";
-        public int Iterations { get; set; }
-        public string StoredKey { get; set; } = "";
-        public string ServerKey { get; set; } = "";
-    }
-
     private sealed class FileModel
     {
         public List<AdminUser> Admins { get; set; } = [];
-        public List<StreamUser> StreamUsers { get; set; } = [];
     }
 
     private static readonly JsonSerializerOptions Json = new()
@@ -63,13 +46,7 @@ public sealed class UserStore : IStreamUserStore
         _model = File.Exists(_path)
             ? JsonSerializer.Deserialize<FileModel>(File.ReadAllText(_path), Json) ?? new FileModel()
             : new FileModel();
-
-        var secretPath = Path.Combine(dataDir, "server.secret");
-        if (!File.Exists(secretPath)) File.WriteAllBytes(secretPath, RandomNumberGenerator.GetBytes(32));
-        ServerSecret = File.ReadAllBytes(secretPath);
     }
-
-    public byte[] ServerSecret { get; }
 
     // ---------------------------------------------------------------- validation
 
@@ -137,71 +114,6 @@ public sealed class UserStore : IStreamUserStore
             HashAlgorithmName.SHA256, 32);
         return a is not null && CryptographicOperations.FixedTimeEquals(hash, Convert.FromBase64String(a.Hash));
     }
-
-    // ---------------------------------------------------------------- stream users
-
-    public ScramCredentials? Find(string user, string deviceSerial)
-    {
-        lock (_lock)
-        {
-            var u = _model.StreamUsers.FirstOrDefault(x => x.Name == user);
-            if (u is null || !u.Enabled || !(u.Devices.Contains(AllDevices) || u.Devices.Contains(deviceSerial))) return null;
-            return new ScramCredentials(Convert.FromBase64String(u.Salt), u.Iterations,
-                Convert.FromBase64String(u.StoredKey), Convert.FromBase64String(u.ServerKey));
-        }
-    }
-
-    public sealed record StreamUserInfo(string Name, bool Enabled, List<string> Devices);
-
-    public List<StreamUserInfo> ListStreamUsers()
-    {
-        lock (_lock) return _model.StreamUsers.Select(u => new StreamUserInfo(u.Name, u.Enabled, [.. u.Devices])).ToList();
-    }
-
-    /// <summary>Creates or updates a stream user. <paramref name="password"/> null = keep the current one.</summary>
-    public void SaveStreamUser(string name, bool enabled, IEnumerable<string> devices, string? password)
-    {
-        var creds = password is null ? null : ScramCredentials.Create(password);
-        lock (_lock)
-        {
-            var u = _model.StreamUsers.FirstOrDefault(x => x.Name == name);
-            if (u is null)
-            {
-                if (creds is null) throw new InvalidOperationException("Neuer Benutzer braucht ein Passwort");
-                _model.StreamUsers.Add(u = new StreamUser { Name = name });
-            }
-            u.Enabled = enabled;
-            u.Devices = devices.Distinct().ToList();
-            if (u.Devices.Count == 0) u.Devices = [];
-            if (creds is not null)
-            {
-                u.Salt = Convert.ToBase64String(creds.Salt);
-                u.Iterations = creds.Iterations;
-                u.StoredKey = Convert.ToBase64String(creds.StoredKey);
-                u.ServerKey = Convert.ToBase64String(creds.ServerKey);
-            }
-            Save();
-        }
-    }
-
-    public bool StreamUserExists(string name)
-    {
-        lock (_lock) return _model.StreamUsers.Any(x => x.Name == name);
-    }
-
-    public bool DeleteStreamUser(string name)
-    {
-        lock (_lock)
-        {
-            var removed = _model.StreamUsers.RemoveAll(x => x.Name == name) > 0;
-            if (removed) Save();
-            return removed;
-        }
-    }
-
-    /// <summary>CLI helper: create/update with access to all sticks.</summary>
-    public void SetPassword(string user, string password) =>
-        SaveStreamUser(user, enabled: true, StreamUserExists(user) ? ListStreamUsers().First(u => u.Name == user).Devices : [AllDevices], password);
 
     private void Save()
     {

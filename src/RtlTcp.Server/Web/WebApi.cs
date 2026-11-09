@@ -3,7 +3,6 @@ using System.Net;
 using System.Security.Claims;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.Cookies;
-using RtlTcp.Core.Auth;
 using RtlTcp.Core.Config;
 using RtlTcp.Core.Rtl2832;
 using RtlTcp.Server.Logging;
@@ -19,15 +18,13 @@ public static class WebApi
     public sealed record SessionDto(bool LoggedIn, string? User, string Version, bool Ingress, bool MustChangePassword, bool DefaultLoginHint);
     public sealed record CredentialsDto(string User, string Password);
     public sealed record PasswordChangeDto(string Current, string New);
-    public sealed record AuthSettingsDto(bool Enabled, List<string> TrustedNetworks);
-    public sealed record StreamUserDto(string Name, bool Enabled, List<string> Devices, string? Password);
 
     public sealed record DeviceStatusDto(
         int Port, string Name, string Serial, bool Enabled, string State, string Message,
         string? Client, DateTimeOffset? ClientSince, long BytesStreamed,
         string? Tuner, ulong? Frequency, uint? SampleRate, int? Gain, bool BiasTee, string? Error);
 
-    public sealed record StatusDto(string Version, bool AuthEnabled, List<DeviceStatusDto> Devices, List<StickDto> Sticks,
+    public sealed record StatusDto(string Version, List<DeviceStatusDto> Devices, List<StickDto> Sticks,
         string? UpdateVersion, bool UpdateCanInstall, RemoteStatusDto Remote);
 
     /// <summary>Sharing between sites: own fingerprint (for the other side), listener, or why it is unavailable.</summary>
@@ -67,7 +64,7 @@ public static class WebApi
             var name = ctx.User.Identity?.Name;
             return new SessionDto(ctx.User.Identity?.IsAuthenticated == true, name, StreamHostService.Version, ingress,
                 MustChangePassword: !ingress && users.MustChangePassword(name),
-                DefaultLoginHint: users.MustChangePassword(UserStore.DefaultAdmin) && IsLocal(ctx, cfg));
+                DefaultLoginHint: users.MustChangePassword(UserStore.DefaultAdmin) && IsLocal(ctx));
         });
 
         api.MapPost("/login", async (HttpContext ctx, CredentialsDto dto, UserStore users, LoginThrottle throttle, ServerConfigHolder cfg) =>
@@ -86,7 +83,7 @@ public static class WebApi
                 return Problem("Benutzer oder Passwort falsch", 401);
             }
             throttle.Succeeded(ip);
-            if (users.MustChangePassword(dto.User) && !IsLocal(ctx, cfg))
+            if (users.MustChangePassword(dto.User) && !IsLocal(ctx))
             {
                 log.LogWarning("Web login with default password from {Ip} refused (not a local network)", ip);
                 return Problem("Das Standardpasswort ist nur aus dem lokalen Netzwerk erlaubt. Bitte dort anmelden und ändern.", 403);
@@ -176,7 +173,7 @@ public static class WebApi
                 if (m.OpenSerial is { } serial && sticks.All(s => s.Serial != serial))
                     sticks.Add(new StickDto(serial, "in Verwendung", "", configured.Contains(serial)));
             var r = host.Remote;
-            return new StatusDto(StreamHostService.Version, cfg.Current.Auth.Enabled, devices, sticks,
+            return new StatusDto(StreamHostService.Version, devices, sticks,
                 update.UpdateAvailable ? update.Latest!.Version : null, update.CanInstall,
                 new RemoteStatusDto(r.Fingerprint, r.ListenEndPoint?.ToString(), r.Unavailable ?? r.ListenError));
         });
@@ -198,20 +195,6 @@ public static class WebApi
             cfg.Update(c => c.Devices = devices);
             log.LogInformation("{Admin} saved {Count} device(s), restarting stream servers", Who(ctx), devices.Count);
             await host.ReloadAsync();
-            return Results.Ok();
-        });
-
-        admin.MapGet("/settings/auth", (ServerConfigHolder cfg) =>
-            new AuthSettingsDto(cfg.Current.Auth.Enabled, cfg.Current.Auth.TrustedNetworks));
-
-        admin.MapPut("/settings/auth", (HttpContext ctx, AuthSettingsDto dto, ServerConfigHolder cfg) =>
-        {
-            var nets = dto.TrustedNetworks.Select(n => n.Trim()).Where(n => n.Length > 0).Distinct().ToList();
-            foreach (var n in nets)
-                if (!IPNetwork.TryParse(n, out _)) return Problem($"Ungültiges Netz: {n} (Beispiel: 192.168.0.0/16)");
-            cfg.Update(c => c.Auth = new AuthConfig { Enabled = dto.Enabled, TrustedNetworks = nets });
-            log.LogInformation("{Admin} set stream authentication {State}, trusted networks: {Nets}",
-                Who(ctx), dto.Enabled ? "ON" : "OFF", nets.Count == 0 ? "none" : string.Join(", ", nets));
             return Results.Ok();
         });
 
@@ -342,35 +325,6 @@ public static class WebApi
             using (stream) return Results.Text(Tail(stream, Math.Clamp(tail ?? 500, 1, 5000)), "text/plain; charset=utf-8");
         });
 
-        admin.MapGet("/users", (UserStore users) => users.ListStreamUsers());
-
-        admin.MapPost("/users", (HttpContext ctx, StreamUserDto dto, UserStore users) =>
-        {
-            if (UserStore.ValidateName(dto.Name) is { } e1) return Problem(e1);
-            if (users.StreamUserExists(dto.Name)) return Problem("Benutzer existiert bereits", 409);
-            if (UserStore.ValidatePassword(dto.Password) is { } e2) return Problem(e2);
-            users.SaveStreamUser(dto.Name, dto.Enabled, dto.Devices, dto.Password);
-            log.LogInformation("{Admin} created stream user {User}", Who(ctx), dto.Name);
-            return Results.Ok();
-        });
-
-        admin.MapPut("/users/{name}", (HttpContext ctx, string name, StreamUserDto dto, UserStore users) =>
-        {
-            if (!users.StreamUserExists(name)) return Problem("Benutzer nicht gefunden", 404);
-            if (!string.IsNullOrEmpty(dto.Password) && UserStore.ValidatePassword(dto.Password) is { } e) return Problem(e);
-            users.SaveStreamUser(name, dto.Enabled, dto.Devices, string.IsNullOrEmpty(dto.Password) ? null : dto.Password);
-            log.LogInformation("{Admin} updated stream user {User} (enabled: {Enabled}{Pw})", Who(ctx), name, dto.Enabled,
-                string.IsNullOrEmpty(dto.Password) ? "" : ", new password");
-            return Results.Ok();
-        });
-
-        admin.MapDelete("/users/{name}", (HttpContext ctx, string name, UserStore users) =>
-        {
-            if (!users.DeleteStreamUser(name)) return Problem("Benutzer nicht gefunden", 404);
-            log.LogInformation("{Admin} deleted stream user {User}", Who(ctx), name);
-            return Results.Ok();
-        });
-
         admin.MapPut("/admin/password", (HttpContext ctx, PasswordChangeDto dto, UserStore users) =>
         {
             var name = ctx.User.Identity!.Name!;
@@ -421,13 +375,19 @@ public static class WebApi
             new ClaimsPrincipal(new ClaimsIdentity([new Claim(ClaimTypes.Name, user)], CookieAuthenticationDefaults.AuthenticationScheme)),
             new AuthenticationProperties { IsPersistent = true });
 
-    /// <summary>Private/trusted network (the default password only works from there).</summary>
-    private static bool IsLocal(HttpContext ctx, ServerConfigHolder cfg)
+    private static readonly IPNetwork[] LocalNetworks =
+        [.. new[] { "127.0.0.0/8", "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "::1/128", "fc00::/7", "fe80::/10" }
+            .Select(IPNetwork.Parse)];
+
+    /// <summary>Private network (the default password only works from there).</summary>
+    private static bool IsLocal(HttpContext ctx)
     {
         var ip = ctx.Connection.RemoteIpAddress;
         if (ip is null) return false;
-        var nets = AccessPolicy.DefaultTrustedNetworks.Concat(cfg.Current.Auth.TrustedNetworks);
-        return new AccessPolicy(authEnabled: true, nets).IsTrusted(ip);
+        if (ip.IsIPv4MappedToIPv6) ip = ip.MapToIPv4();
+        if (ip.AddressFamily == System.Net.Sockets.AddressFamily.InterNetworkV6 && ip.ScopeId != 0)
+            ip = new IPAddress(ip.GetAddressBytes()); // drop %scope for matching
+        return LocalNetworks.Any(n => n.Contains(ip));
     }
 
     private static string? ValidateDevices(List<DeviceConfig> devices, IReadOnlySet<int> webPorts)

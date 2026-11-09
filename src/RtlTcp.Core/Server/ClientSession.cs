@@ -3,7 +3,6 @@ using System.Net;
 using System.Net.Sockets;
 using System.Threading.Channels;
 using Microsoft.Extensions.Logging;
-using RtlTcp.Core.Auth;
 using RtlTcp.Core.Device;
 using RtlTcp.Core.Protocol;
 
@@ -39,19 +38,12 @@ internal sealed class ClientConnection(Stream stream, IPAddress remoteIp, string
 /// <summary>One client, v1 or v2 (decided by HELLO), see docs/protocol-v2.md.</summary>
 internal sealed class ClientSession : IStreamOwner
 {
-    internal const string AuthRequiredText = "Authentication required: the server only accepts authenticated clients";
-
-    /// <summary>How long a v2 client may take to start authentication (tests shorten it).</summary>
-    internal static TimeSpan AuthTimeout { get; set; } = TimeSpan.FromSeconds(10);
-
     private const int IqQueueBuffers = 64;
     private const int V2IqFrameSize = 64 * 1024;
 
     private readonly ClientConnection _conn;
     private readonly Stream _net;
     private readonly DeviceManager _manager;
-    private readonly AccessPolicy _policy;
-    private readonly IStreamUserStore _users;
     private readonly string _serverVersion;
     private readonly ILogger _log;
     private readonly CancellationTokenSource _cts;
@@ -66,14 +58,12 @@ internal sealed class ClientSession : IStreamOwner
     private string? _lastMessage;
     private long _dropped;
 
-    public ClientSession(ClientConnection conn, DeviceManager manager, AccessPolicy policy, IStreamUserStore users,
-        string serverVersion, ILogger log, CancellationToken serverToken)
+    public ClientSession(ClientConnection conn, DeviceManager manager, string serverVersion, ILogger log,
+        CancellationToken serverToken)
     {
         _conn = conn;
         _net = conn.Stream;
         _manager = manager;
-        _policy = policy;
-        _users = users;
         _serverVersion = serverVersion;
         _log = log;
         _cts = CancellationTokenSource.CreateLinkedTokenSource(serverToken);
@@ -99,7 +89,7 @@ internal sealed class ClientSession : IStreamOwner
             Task writer;
             if (_v2)
             {
-                if (!await HandshakeV2Async(ct)) return;
+                await HandshakeV2Async(ct);
                 if (!_manager.TryAcquire(this, out var current))
                 {
                     await SendFatalAsync(ErrorCodes.Busy, $"Server already in use by {current?.RemoteAddress}", current?.RemoteAddress);
@@ -111,11 +101,6 @@ internal sealed class ClientSession : IStreamOwner
             }
             else
             {
-                if (_policy.RequiresAuth(RemoteIp))
-                {
-                    _log.LogInformation("v1 client {Client} rejected: authentication required", RemoteAddress);
-                    return;
-                }
                 if (!_manager.TryAcquire(this, out var current))
                 {
                     _log.LogInformation("v1 client {Client} rejected: busy ({Owner})", RemoteAddress, current?.RemoteAddress);
@@ -208,68 +193,19 @@ internal sealed class ClientSession : IStreamOwner
 
     // ---------------------------------------------------------------- v2
 
-    private async Task<bool> HandshakeV2Async(CancellationToken ct)
+    /// <summary>
+    /// Header + server_info. There is no client authentication (the internet connection is handled by
+    /// rtl.over.internet); header flags stay 0 and "auth" stays "none" for older clients.
+    /// </summary>
+    private async Task HandshakeV2Async(CancellationToken ct)
     {
-        var authRequired = _policy.RequiresAuth(RemoteIp);
         var header = new byte[V2.HeaderSize];
-        V2.WriteHeader(header, authRequired ? V2HeaderFlags.AuthRequired : V2HeaderFlags.None);
+        V2.WriteHeader(header, V2HeaderFlags.None);
         await _net.WriteAsync(header, ct);
 
         var serial = _manager.OpenSerial ?? _manager.Config.Serial;
         await _net.WriteAsync(Frame(new ServerInfoMessage("rtltcp.server", _serverVersion,
-            new DeviceInfo(_manager.Config.Name, serial),
-            authRequired ? ServerInfoMessage.AuthRequired : ServerInfoMessage.AuthNone)), ct);
-
-        if (!authRequired) return true;
-
-        // SCRAM exchange. A client that does not start it (sends something else or nothing within
-        // AuthTimeout) is told that authentication is required and disconnected.
-        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
-        timeout.CancelAfter(AuthTimeout);
-        var scram = new ScramServerSession(u => _users.Find(u, serial), _users.ServerSecret);
-
-        V2Message? first;
-        try
-        {
-            first = await ReadJsonAsync(timeout.Token);
-        }
-        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
-        {
-            first = null;
-        }
-        if (first is not AuthStartMessage start)
-        {
-            await SendFatalAsync(ErrorCodes.AuthRequired, AuthRequiredText);
-            return false;
-        }
-        try
-        {
-            var (nonce, salt, iterations) = scram.Start(start.User, start.Cnonce);
-            await _net.WriteAsync(Frame(new AuthChallengeMessage(nonce, salt, iterations)), timeout.Token);
-        }
-        catch (Exception ex) when (ex is ArgumentException or FormatException)
-        {
-            await SendFatalAsync(ErrorCodes.AuthFailed, "Authentication failed");
-            return false;
-        }
-
-        var signature = await ReadJsonAsync(timeout.Token) is AuthProofMessage proof ? scram.Finish(proof.Proof) : null;
-        if (signature is null)
-        {
-            _log.LogWarning("{Client}: authentication failed for user {User}", RemoteAddress, start.User);
-            await SendFatalAsync(ErrorCodes.AuthFailed, "Authentication failed");
-            return false;
-        }
-        _log.LogInformation("{Client}: authenticated as {User}", RemoteAddress, start.User);
-        await _net.WriteAsync(Frame(new AuthOkMessage(signature)), ct);
-        return true;
-    }
-
-    /// <summary>Reads the next frame; non-JSON frames (e.g. commands sent before authenticating) yield null.</summary>
-    private async Task<V2Message?> ReadJsonAsync(CancellationToken ct)
-    {
-        var (type, payload) = await ReadFrameAsync(ct);
-        return type == FrameType.Json ? V2Json.Deserialize(payload) : null;
+            new DeviceInfo(_manager.Config.Name, serial), ServerInfoMessage.AuthNone)), ct);
     }
 
     private async Task<(FrameType Type, byte[] Payload)> ReadFrameAsync(CancellationToken ct)
