@@ -36,6 +36,16 @@
           CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" ExcludeFromSingleFile="true" />
   </ItemGroup>
 
+  <!-- Windows release: msquic.dll (QUIC, sharing over the internet) next to the exe. Bundled into the single file,
+       System.Net.Quic does not find it and reports QUIC as unsupported. -->
+  <Target Name="CopyMsQuicNextToExe" AfterTargets="Publish" Condition="$(RuntimeIdentifier.StartsWith('win-'))">
+    <ItemGroup>
+      <_MsQuic Include="@(RuntimePackAsset)" Condition="'%(Filename)%(Extension)' == 'msquic.dll'" />
+    </ItemGroup>
+    <Error Condition="'@(_MsQuic)' == ''" Text="msquic.dll not found in the runtime pack" />
+    <Copy SourceFiles="@(_MsQuic)" DestinationFolder="$(PublishDir)" SkipUnchangedFiles="true" />
+  </Target>
+
   <ItemGroup>
     <Content Remove="wwwroot\**" />
     <EmbeddedResource Include="wwwroot\**" />
