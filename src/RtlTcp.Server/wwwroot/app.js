@@ -284,8 +284,16 @@ async function renderDevices() {
     });
     draw();
   };
+  const addRemote = () => {
+    devices.push({
+      serial: '', name: 'Entfernter Stick', enabled: true, bind: '0.0.0.0', port: nextPort(), idleTimeoutSeconds: 30, v1WaitForDeviceSeconds: 10,
+      defaults: { frequency: 100000000, sampleRate: 2048000, gain: null, ppm: 0, biasTee: false },
+      remote: { host: '', port: 4433, fingerprint: '', share: '' },
+    });
+    draw();
+  };
 
-  const num = (value, set, attrs) => h('input', { type: 'number', value, ...attrs, oninput: (e) => set(e.target.value === '' ? 0 : Number(e.target.value)) });
+  const num =(value, set, attrs) => h('input', { type: 'number', value, ...attrs, oninput: (e) => set(e.target.value === '' ? 0 : Number(e.target.value)) });
 
   const deviceCard = (d, i) => {
     const serialOptions = [h('option', { value: '', text: 'Erster freier Stick' })];
@@ -309,14 +317,18 @@ async function renderDevices() {
         switchEl(d.enabled, (v) => { d.enabled = v; }, 'aktiv')),
       h('div', { class: 'form-grid' },
         field('Name', h('input', { type: 'text', value: d.name, maxlength: 64, oninput: (e) => { d.name = e.target.value; } })),
-        d.remote
-          ? field('Entfernter Stick', h('input', { type: 'text', disabled: true, value: `${d.remote.share} @ ${d.remote.host}:${d.remote.port}` }),
-            'über das Internet, Eintrag in config.json (Testbetrieb)')
-          : field('Stick', serial, 'über die Seriennummer zugeordnet'),
+        d.remote ? null : field('Stick', serial, 'über die Seriennummer zugeordnet'),
         field('Port', num(d.port, (v) => { d.port = v; }, { min: 1, max: 65535 })),
         field('Adresse', h('input', { type: 'text', value: d.bind, oninput: (e) => { d.bind = e.target.value.trim(); } }), '0.0.0.0 = alle Netzwerkkarten'),
         field('Stick abschalten nach', num(d.idleTimeoutSeconds, (v) => { d.idleTimeoutSeconds = v; }, { min: 0 }), 'Sekunden ohne Client, 0 = immer an'),
         field('v1-Client wartet auf Stick', num(d.v1WaitForDeviceSeconds, (v) => { d.v1WaitForDeviceSeconds = v; }, { min: 0, max: 300 }), 'Sekunden, danach wird getrennt')),
+      d.remote ? [
+        h('h3', { text: 'Entfernter Stick (Testbetrieb)', class: 'section-title' }),
+        h('div', { class: 'form-grid' },
+          field('Server', h('input', { type: 'text', value: d.remote.host, oninput: (e) => { d.remote.host = e.target.value.trim(); } }), 'IP oder Name des teilenden rtltcp.server'),
+          field('UDP-Port', num(d.remote.port, (v) => { d.remote.port = v; }, { min: 1, max: 65535 }), 'dort unter Einstellungen'),
+          field('Fingerprint', h('input', { type: 'text', value: d.remote.fingerprint, spellcheck: 'false', oninput: (e) => { d.remote.fingerprint = e.target.value.trim(); } }), 'steht unten auf dessen Statusseite'),
+          field('Seriennummer dort', h('input', { type: 'text', value: d.remote.share, oninput: (e) => { d.remote.share = e.target.value.trim(); } })))] : null,
       h('h3', { text: 'Standardwerte bei jeder neuen Verbindung', class: 'section-title' }),
       h('div', { class: 'form-grid' },
         field('Frequenz (MHz)', h('input', {
@@ -349,7 +361,9 @@ async function renderDevices() {
 
   setPage(
     h('div', { class: 'page-head' }, h('h1', { text: 'Geräte' }),
-      h('button', { class: 'btn', text: '+ Gerät hinzufügen', onclick: add })),
+      h('div', { class: 'buttons' },
+        h('button', { class: 'btn', text: '+ Entfernter Stick', onclick: addRemote }),
+        h('button', { class: 'btn', text: '+ Gerät hinzufügen', onclick: add }))),
     h('p', { class: 'lead', text: 'Jeder Stick bekommt einen eigenen Port. Clients verbinden sich mit Server-Adresse und diesem Port (rtl_tcp).' }),
     status.devices.some((d) => d.client) ? h('div', { class: 'notice' },
       h('p', { text: 'Speichern startet die Stream-Server neu – verbundene Clients werden dabei getrennt.' })) : null,
@@ -589,10 +603,50 @@ function updateCard(u) {
 // ------------------------------------------------------------------ settings
 
 async function renderSettings() {
-  let auth, logging, update;
+  let auth, logging, update, remote, status, devices;
   try {
-    [auth, logging, update] = await Promise.all([api('GET', '/settings/auth'), api('GET', '/settings/logging'), api('GET', '/update')]);
+    [auth, logging, update, remote, status, devices] = await Promise.all([api('GET', '/settings/auth'), api('GET', '/settings/logging'),
+      api('GET', '/update'), api('GET', '/settings/remote'), api('GET', '/status'), api('GET', '/devices')]);
   } catch (e) { if (e.status !== 401) setPage(h('div', { class: 'notice err', text: e.message })); return; }
+
+  // ---- sharing over the internet (test mode: peers entered by hand)
+  const usbSticks = devices.filter((d) => !d.remote && d.serial);
+  const peerList = h('div');
+  const peerCard = (p, i) => h('div', { class: 'peer' },
+    h('div', { class: 'form-grid' },
+      field('Name der Gegenstelle', h('input', { type: 'text', value: p.name, maxlength: 64, oninput: (e) => { p.name = e.target.value; } })),
+      field('Fingerprint der Gegenstelle', h('input', { type: 'text', value: p.fingerprint, spellcheck: 'false', oninput: (e) => { p.fingerprint = e.target.value.trim(); } }),
+        'steht unten auf deren Statusseite')),
+    h('div', { class: 'buttons' },
+      usbSticks.length ? usbSticks.map((d) => switchEl(p.devices.includes(d.serial), (v) => {
+        p.devices = v ? [...new Set([...p.devices, d.serial])] : p.devices.filter((s) => s !== d.serial);
+      }, `${d.name} (${d.serial})`)) : h('span', { class: 'muted', text: 'Keine Sticks mit Seriennummer eingetragen.' }),
+      h('button', { class: 'btn small danger', type: 'button', text: 'Entfernen', onclick: () => { remote.peers.splice(i, 1); drawPeers(); } })));
+  const drawPeers = () => fill(peerList, remote.peers.map(peerCard));
+  drawPeers();
+  const udpPort = h('input', { type: 'number', min: 0, max: 65535, value: remote.listenPort });
+  const saveRemote = h('button', { class: 'btn primary', type: 'submit', text: 'Speichern' });
+  const remoteForm = h('form', {
+    class: 'card',
+    onsubmit: (e) => {
+      e.preventDefault();
+      guarded(saveRemote, async () => {
+        await api('PUT', '/settings/remote', { listenPort: Number(udpPort.value), bind: remote.bind, peers: remote.peers });
+        toast('Gespeichert – Stream-Server neu gestartet');
+        renderSettings();
+      });
+    },
+  },
+  h('div', { class: 'card-head' }, h('h3', { text: 'Sticks teilen über das Internet (Testbetrieb)' })),
+  h('p', { class: 'muted' }, 'Fingerprint dieses Servers: ',
+    h('code', { text: status.remote.fingerprint || '–' }),
+    status.remote.listen ? ` · aktiv auf UDP ${status.remote.listen}` : null,
+    status.remote.error ? h('strong', { text: ` · ${status.remote.error}` }) : null),
+  h('p', { class: 'muted', text: 'Bis rtl.over.internet fertig ist, werden Gegenstellen hier von Hand eingetragen. Der UDP-Port muss für die Gegenstelle erreichbar sein (LAN oder IPv6).' }),
+  h('div', { class: 'form-grid' }, field('UDP-Port für Gegenstellen', udpPort, '0 = keine Freigabe, z. B. 4433')),
+  peerList,
+  h('div', { class: 'buttons' }, saveRemote,
+    h('button', { class: 'btn', type: 'button', text: '+ Gegenstelle', onclick: () => { remote.peers.push({ name: '', fingerprint: '', devices: [] }); drawPeers(); } })));
 
   const days = h('input', { type: 'number', min: 1, max: 365, value: logging.retentionDays, required: true });
   const saveLog = h('button', { class: 'btn primary', type: 'submit', text: 'Speichern' });
@@ -654,7 +708,7 @@ async function renderSettings() {
     field('Aktuelles Passwort', cur), field('Neues Passwort', pw, 'mindestens 8 Zeichen'), field('Wiederholen', pw2)),
   h('div', { class: 'buttons' }, savePw));
 
-  setPage(h('div', { class: 'page-head' }, h('h1', { text: 'Einstellungen' })), updateCard(update), authForm, logForm,
+  setPage(h('div', { class: 'page-head' }, h('h1', { text: 'Einstellungen' })), updateCard(update), authForm, remoteForm, logForm,
     session.ingress ? null : pwForm);
 }
 

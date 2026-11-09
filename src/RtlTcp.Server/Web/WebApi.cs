@@ -207,6 +207,31 @@ public static class WebApi
             return Results.Ok();
         });
 
+        admin.MapGet("/settings/remote", (ServerConfigHolder cfg) => cfg.Current.Remote);
+
+        admin.MapPut("/settings/remote", async (HttpContext ctx, RemoteConfig dto, ServerConfigHolder cfg, StreamHostService host) =>
+        {
+            if (dto.ListenPort is < 0 or > 65535) return Problem($"Ungültiger UDP-Port {dto.ListenPort}");
+            if (!IPAddress.TryParse(dto.Bind, out _)) return Problem($"Ungültige Adresse {dto.Bind}");
+            var peers = new List<RemotePeerConfig>();
+            foreach (var p in dto.Peers)
+            {
+                var name = p.Name.Trim();
+                if (name.Length == 0) return Problem("Jede Gegenstelle braucht einen Namen");
+                if (RtlTcp.Core.Remote.RemoteProtocol.NormalizeFingerprint(p.Fingerprint).Length != 64)
+                    return Problem($"{name}: Fingerprint ungültig (SHA-256, 64 Hex-Zeichen)");
+                peers.Add(new RemotePeerConfig
+                {
+                    Name = name, Fingerprint = p.Fingerprint.Trim(),
+                    Devices = [.. p.Devices.Select(d => d.Trim()).Where(d => d.Length > 0).Distinct()],
+                });
+            }
+            cfg.Update(c => c.Remote = new RemoteConfig { ListenPort = dto.ListenPort, Bind = dto.Bind, Peers = peers });
+            log.LogInformation("{Admin} saved remote sharing: udp port {Port}, {Count} peer(s)", Who(ctx), dto.ListenPort, peers.Count);
+            await host.ReloadAsync();
+            return Results.Ok();
+        });
+
         admin.MapGet("/settings/logging", (ServerConfigHolder cfg) => cfg.Current.Logging);
 
         admin.MapPut("/settings/logging", (LogConfig dto, ServerConfigHolder cfg, FileLoggerProvider log) =>
