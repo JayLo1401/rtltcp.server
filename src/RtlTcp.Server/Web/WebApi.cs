@@ -22,7 +22,8 @@ public static class WebApi
     public sealed record DeviceStatusDto(
         int Port, string Name, string Serial, bool Enabled, string State, string Message,
         string? Client, DateTimeOffset? ClientSince, long BytesStreamed,
-        string? Tuner, ulong? Frequency, uint? SampleRate, int? Gain, bool BiasTee, string? Error);
+        string? Tuner, ulong? Frequency, uint? SampleRate, int? Gain, bool BiasTee, string? Error,
+        string? ClientProtocol = null, string? Origin = null);
 
     public sealed record StatusDto(string Version, List<DeviceStatusDto> Devices, List<StickDto> Sticks,
         string? UpdateVersion, bool UpdateCanInstall, RemoteStatusDto Remote);
@@ -162,7 +163,8 @@ public static class WebApi
                 return new DeviceStatusDto(d.Port, d.Name, m?.OpenSerial ?? d.Serial, d.Enabled, state,
                     !d.Enabled ? "Deaktiviert" : m?.StateMessage ?? error ?? "Nicht gestartet",
                     m?.Owner?.RemoteAddress, m?.OwnerSince, m?.BytesStreamed ?? 0, m?.Tuner?.Name,
-                    m?.Tuning.Frequency, m?.Tuning.SampleRate, m?.Tuning.Gain, m?.Tuning.BiasTee ?? false, error);
+                    m?.Tuning.Frequency, m?.Tuning.SampleRate, m?.Tuning.Gain, m?.Tuning.BiasTee ?? false, error,
+                    m?.Owner?.Protocol, d.Remote is null ? null : OriginText(m?.Origin()));
             }).ToList();
             var configured = cfg.Current.Devices.Select(d => d.Serial).ToHashSet();
             // A stick that is open (by us) cannot be opened again to read its serial (Windows) → add our open sticks.
@@ -366,6 +368,9 @@ public static class WebApi
         var ip = ctx.Connection.RemoteIpAddress ?? IPAddress.None;
         return ip.IsIPv4MappedToIPv6 ? ip.MapToIPv4() : ip;
     }
+
+    private static string OriginText(RtlTcp.Core.Protocol.RemoteOrigin? o) =>
+        o is null ? "entfernt" : $"entfernt: {o.Site ?? "?"}{(o.Instance is { } i ? $" über {i}" : "")}";
 
     private static IResult Problem(string message, int status = 400) =>
         Results.Json(new { error = message }, statusCode: status);

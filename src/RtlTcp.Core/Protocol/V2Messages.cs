@@ -8,12 +8,33 @@ namespace RtlTcp.Core.Protocol;
     UnknownDerivedTypeHandling = JsonUnknownDerivedTypeHandling.FailSerialization)]
 [JsonDerivedType(typeof(ServerInfoMessage), "server_info")]
 [JsonDerivedType(typeof(StatusMessage), "status")]
+[JsonDerivedType(typeof(DevicesMessage), "devices")]
 [JsonDerivedType(typeof(ErrorMessage), "error")]
 [JsonDerivedType(typeof(PingMessage), "ping")]
 [JsonDerivedType(typeof(PongMessage), "pong")]
 public abstract record V2Message;
 
-public sealed record DeviceInfo(string Name, string Serial);
+/// <param name="Name">Display name of the stick (set in the web GUI).</param>
+/// <param name="Port">Stream port of this stick on the server.</param>
+/// <param name="Source"><see cref="DeviceSources.Usb"/> or <see cref="DeviceSources.Remote"/>.</param>
+/// <param name="Remote">Only for remote sticks: where it comes from.</param>
+public sealed record DeviceInfo(string Name, string Serial, int? Port = null, string? Source = null, RemoteOrigin? Remote = null);
+
+/// <summary>Origin of a stick shared by another site: instance on rtl.over.internet and providing server.</summary>
+public sealed record RemoteOrigin(string? Instance, string? Site);
+
+public static class DeviceSources
+{
+    public const string Usb = "usb";
+    public const string Remote = "remote";
+}
+
+/// <summary>One stick of the server in a <see cref="DevicesMessage"/>.</summary>
+public sealed record DeviceListEntry(int Port, string Name, string Serial, string Source, RemoteOrigin? Remote, string State,
+    string? BusyBy, string? Tuner);
+
+/// <summary>Answer to the info HELLO (docs/protocol-v2.md §2.1): all sticks of the server, then the server closes.</summary>
+public sealed record DevicesMessage(IReadOnlyList<DeviceListEntry> Devices) : V2Message;
 
 /// <param name="Auth">Always "none": clients are not authenticated (kept for older clients that read it).</param>
 public sealed record ServerInfoMessage(string Server, string Version, DeviceInfo Device, string Auth) : V2Message

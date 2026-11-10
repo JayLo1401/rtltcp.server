@@ -96,7 +96,11 @@ public sealed class RemoteTests : IAsyncLifetime
     {
         if (!Supported) return;
         var port = StartConsumer();
+        _consumer!.Origin = () => new RemoteOrigin("Max", "Standort1");
         await using var c = await ConnectV2Async(port);
+        var info = await c.ExpectAsync<ServerInfoMessage>();
+        Assert.Equal(DeviceSources.Remote, info.Device.Source);
+        Assert.Equal(new RemoteOrigin("Max", "Standort1"), info.Device.Remote);
         var ready = await c.ExpectAsync<StatusMessage>(s => s.State == DeviceStates.Ready);
         Assert.Equal(TunerType.R820T, ready.Tuner!.Type);
         Assert.Equal([0, 9, 14], ready.Tuner.Gains);

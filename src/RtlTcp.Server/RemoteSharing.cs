@@ -71,6 +71,15 @@ public sealed class RemoteSharing(string dataDir, ILoggerFactory loggers) : IDis
 
     public static string ServerNameOf(RemoteConfig cfg) => cfg.ServerName.Trim() is { Length: > 0 } n ? n : Environment.MachineName;
 
+    /// <summary>Instance and providing site of a remote stick (names as the broker reports them now).</summary>
+    public RtlTcp.Core.Protocol.RemoteOrigin OriginOf(RemoteDeviceConfig remote)
+    {
+        if (remote.Instance.Length == 0) return new(null, remote.Host);
+        var b = Broker(remote.Instance);
+        var share = b?.Shares.FirstOrDefault(s => s.ShareId == remote.Share);
+        return new(b?.InstanceName, share?.ProviderName);
+    }
+
     // ---------------------------------------------------------------- sources (user side)
 
     public ISdrDeviceSource SourceFor(RemoteDeviceConfig remote, ILogger deviceLog)

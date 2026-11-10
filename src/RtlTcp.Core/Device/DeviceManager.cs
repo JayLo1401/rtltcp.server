@@ -25,6 +25,9 @@ public interface IStreamOwner
 {
     string RemoteAddress { get; }
 
+    /// <summary>"rtl_tcp" (v1) or "rtl_tcp Jay extended" (v2), for the status page.</summary>
+    string Protocol => "";
+
     /// <summary>Called on the USB thread; must copy and return quickly.</summary>
     void OnIq(ReadOnlySpan<byte> data);
 
@@ -92,6 +95,10 @@ public sealed class DeviceManager : IAsyncDisposable
     private string NotReadyText => _source.IsRemote ? "Remote stick not ready" : "USB device not ready";
 
     public DeviceConfig Config { get; }
+
+    /// <summary>For remote sticks: instance and providing site (looked up when asked, names can change).</summary>
+    public Func<Protocol.RemoteOrigin?> Origin { get; set; } = () => null;
+
     public DeviceState State { get; private set; } = DeviceState.Idle;
     public string StateMessage { get; private set; } = "Device idle";
 

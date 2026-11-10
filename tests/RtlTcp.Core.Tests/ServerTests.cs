@@ -80,7 +80,7 @@ public sealed class ServerTests : IAsyncLifetime
         _source.Present = false;
         await using var c = await TestClient.ConnectAsync(Port);
         Assert.True(await c.IsClosedAsync());
-        Assert.Equal(DeviceState.Idle, _manager.State);
+        await Eventually(() => _manager.State == DeviceState.Idle);
     }
 
     // ---------------------------------------------------------------- v2
@@ -219,6 +219,52 @@ public sealed class ServerTests : IAsyncLifetime
         _manager.KickOwner();
         Assert.Equal(ErrorCodes.Kicked, (await c.ExpectAsync<ErrorMessage>()).Code);
         await Eventually(() => _manager.Owner is null);
+    }
+
+    [Fact]
+    public async Task Server_info_names_port_and_source_of_the_stick()
+    {
+        await using var c = await TestClient.ConnectAsync(Port);
+        await c.SendHelloAsync();
+        await c.ReadAsync(V2.HeaderSize);
+        var info = await c.ExpectAsync<ServerInfoMessage>();
+        Assert.Equal("Test", info.Device.Name);
+        Assert.Equal(Port, info.Device.Port);
+        Assert.Equal(DeviceSources.Usb, info.Device.Source);
+        Assert.Null(info.Device.Remote);
+        Assert.Equal("none", info.Auth);
+    }
+
+    [Fact]
+    public async Task Info_hello_lists_the_sticks_and_does_not_take_one()
+    {
+        // someone owns the stick: the list still comes, with busy_by
+        await using var owner = await TestClient.ConnectAsync(Port);
+        await owner.ReadAsync(V1.HeaderSize);
+
+        await using var c = await TestClient.ConnectAsync(Port);
+        await c.SendAsync(V2.HelloInfo.ToArray());
+        V2.ReadHeader(await c.ReadAsync(V2.HeaderSize));
+        await c.ExpectAsync<ServerInfoMessage>();
+        var list = await c.ExpectAsync<DevicesMessage>();
+        var d = Assert.Single(list.Devices);
+        Assert.Equal(Port, d.Port);
+        Assert.Equal("Test", d.Name);
+        Assert.Equal(DeviceSources.Usb, d.Source);
+        Assert.Equal(DeviceStates.Ready, d.State);
+        Assert.Equal("127.0.0.1", d.BusyBy);
+        Assert.True(await c.IsClosedAsync());
+        Assert.Equal("127.0.0.1", _manager.Owner!.RemoteAddress); // owner unchanged
+    }
+
+    [Fact]
+    public void Devices_message_uses_snake_case_and_omits_empty_fields()
+    {
+        var json = System.Text.Encoding.UTF8.GetString(V2Json.Serialize(new DevicesMessage([
+            new DeviceListEntry(1235, "Standort1 Stick 1", "0001", DeviceSources.Remote, new RemoteOrigin("Max", "Standort1"),
+                DeviceStates.Ready, null, "R828D")])));
+        Assert.Equal("""{"type":"devices","devices":[{"port":1235,"name":"Standort1 Stick 1","serial":"0001","source":"remote","remote":{"instance":"Max","site":"Standort1"},"state":"ready","tuner":"R828D"}]}""",
+            json);
     }
 
     [Fact]

@@ -50,10 +50,18 @@ public static class V2
 
     public static ReadOnlySpan<byte> Magic => "RTL2"u8;
 
+    /// <summary>Parameter of the info HELLO: ASCII "RTLI" (list the server's sticks without taking one).</summary>
+    public const uint InfoMagic = 0x52544C49;
+
     public static Command Hello => new(RtlCommand.HelloV2, HelloMagic);
+
+    public static Command HelloInfo => new(RtlCommand.HelloV2, InfoMagic);
 
     public static bool IsHello(ReadOnlySpan<byte> first5) =>
         first5.Length >= Command.Size && Command.Read(first5) == Hello;
+
+    public static bool IsInfo(ReadOnlySpan<byte> first5) =>
+        first5.Length >= Command.Size && Command.Read(first5) == HelloInfo;
 
     /// <summary>"RTL2" | u16 version | u16 flags | u32 reserved.</summary>
     public static void WriteHeader(Span<byte> dst, V2HeaderFlags flags)

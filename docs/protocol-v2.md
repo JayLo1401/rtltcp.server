@@ -1,6 +1,6 @@
 # rtltcp_v2 – Protocol Specification
 
-Status: **Draft 0.2** · Applies to: rtltcp.server ≥ 1.6, clients (e.g. home.radio)
+Status: **Draft 0.3** · Applies to: rtltcp.server ≥ 1.6 (stick details and info HELLO ≥ 1.7), clients (e.g. home.radio)
 
 Names: **rtl_tcp** = v1, **rtl_tcp Jay extended** = v2 (on the wire still `RTL2` / `HELLO_V2`).
 
@@ -78,6 +78,20 @@ The client reads the first 4 bytes:
 - `"RTL0"` → the server is classic `rtl_tcp` (or v2 disabled). Read the remaining 8 header bytes and continue as v1.
 - Connection closed without data → server refused (busy / not ready); v2 clients should show a generic error.
 
+### 2.1 Info HELLO: list the sticks without taking one
+
+To show a server's sticks (e.g. in a picker) without becoming their owner, a client sends instead:
+
+```
+u8  0xF2            HELLO_V2
+u32 0x52544C49      "RTLI"
+```
+
+The server answers on **any** of its stick ports with the v2 header, `server_info` (for the stick of this port)
+and a `devices` message (§4.5), then **closes** the connection. No stick is opened or taken; a running session
+is not disturbed. A classic `rtl_tcp` ignores the command and starts a v1 stream: a client that reads `"RTL0"`
+just closes the connection.
+
 ---
 
 ## 3. v2 session
@@ -126,12 +140,22 @@ message types must be ignored.
   "type": "server_info",
   "server": "rtltcp.server",
   "version": "1.6.0",
-  "device": { "name": "Dach-Antenne", "serial": "00000001" },
+  "device": { "name": "Standort1 Stick 1", "serial": "00000001", "port": 1235, "source": "remote",
+              "remote": { "instance": "Funkfreund Max", "site": "Standort1" } },
   "auth": "none"
 }
 ```
 
-`auth` is always `"none"` (kept for clients written against Draft 0.1).
+| field             | meaning                                                                                  |
+|-------------------|------------------------------------------------------------------------------------------|
+| `device.name`     | display name of the stick, set in the server's web GUI – show this to the user           |
+| `device.serial`   | serial of the stick (at the providing site for remote sticks); may be empty              |
+| `device.port`     | stream port of this stick on the server (since 1.7)                                      |
+| `device.source`   | `usb` = stick on this server, `remote` = stick shared by another site (since 1.7)         |
+| `device.remote`   | only for `remote`: `instance` on rtl.over.internet and providing `site` (both may be missing) |
+| `auth`            | always `"none"` (kept for clients written against Draft 0.1)                             |
+
+Older servers send only `name` and `serial`; clients must treat the other fields as optional.
 
 ### 4.2 `status` (S → C)
 
@@ -179,6 +203,20 @@ longer sent.)
 ### 4.4 `ping` / `pong` (both directions, optional)
 
 `{ "type": "ping", "id": 1 }` → `{ "type": "pong", "id": 1 }`
+
+### 4.5 `devices` (S → C, only after the info HELLO §2.1)
+
+```json
+{ "type": "devices", "devices": [
+    { "port": 1234, "name": "Lokaler RTL-Stick", "serial": "00000001", "source": "usb",
+      "state": "ready", "busy_by": "192.168.1.20", "tuner": "R820T" },
+    { "port": 1235, "name": "Standort1 Stick 1", "serial": "00000001", "source": "remote",
+      "remote": { "instance": "Funkfreund Max", "site": "Standort1" }, "state": "idle" } ] }
+```
+
+`state`: `ready`, `starting`, `device_not_ready`, `device_lost` (as in §4.2) or `idle` (closed, opens when a
+client connects). `busy_by` is the current owner (missing = free), `tuner` the tuner name if known. The server
+closes the connection after this message.
 
 ---
 

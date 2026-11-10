@@ -11,15 +11,18 @@ public sealed class StreamServer : IAsyncDisposable
 {
     private readonly DeviceManager _manager;
     private readonly string _version;
+    private readonly Func<IReadOnlyList<DeviceManager>>? _allDevices;
     private readonly ILogger _log;
     private readonly CancellationTokenSource _cts = new();
     private readonly ConcurrentDictionary<Task, byte> _sessions = new();
     private Socket? _listener;
     private Task? _accept;
 
-    public StreamServer(DeviceManager manager, string version, ILogger log)
+    /// <param name="allDevices">All sticks of the server, for the info HELLO (null = only this one).</param>
+    public StreamServer(DeviceManager manager, string version, ILogger log, Func<IReadOnlyList<DeviceManager>>? allDevices = null)
     {
         _manager = manager;
+        _allDevices = allDevices;
         _version = version;
         _log = log;
     }
@@ -60,7 +63,7 @@ public sealed class StreamServer : IAsyncDisposable
                 continue;
             }
 
-            var session = new ClientSession(ClientConnection.FromSocket(client), _manager, _version, _log, ct);
+            var session = new ClientSession(ClientConnection.FromSocket(client), _manager, _version, _log, ct, _allDevices);
             var task = Task.Run(session.RunAsync, CancellationToken.None);
             _sessions.TryAdd(task, 0);
             _ = task.ContinueWith(t => _sessions.TryRemove(t, out _), TaskScheduler.Default);

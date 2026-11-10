@@ -10,8 +10,11 @@ namespace RtlTcp.Core.Server;
 
 /// <summary>Transport of one client: a TCP socket or a QUIC stream from a remote site.</summary>
 internal sealed class ClientConnection(Stream stream, IPAddress remoteIp, string remoteAddress, Action shutdownSend,
-    bool waitForHello = true)
+    bool waitForHello = true, int localPort = 0)
 {
+    /// <summary>TCP port the client connected to (0 = not a TCP connection).</summary>
+    public int LocalPort { get; } = localPort;
+
     public Stream Stream { get; } = stream;
     public IPAddress RemoteIp { get; } = remoteIp;
     public string RemoteAddress { get; } = remoteAddress;
@@ -31,7 +34,8 @@ internal sealed class ClientConnection(Stream stream, IPAddress remoteIp, string
         socket.SendBufferSize = 1 << 20;
         var ip = ((IPEndPoint)socket.RemoteEndPoint!).Address;
         return new ClientConnection(new NetworkStream(socket, ownsSocket: true), ip,
-            (ip.IsIPv4MappedToIPv6 ? ip.MapToIPv4() : ip).ToString(), () => socket.Shutdown(SocketShutdown.Send));
+            (ip.IsIPv4MappedToIPv6 ? ip.MapToIPv4() : ip).ToString(), () => socket.Shutdown(SocketShutdown.Send),
+            localPort: ((IPEndPoint)socket.LocalEndPoint!).Port);
     }
 }
 
@@ -58,12 +62,16 @@ internal sealed class ClientSession : IStreamOwner
     private string? _lastMessage;
     private long _dropped;
 
+    private readonly Func<IReadOnlyList<DeviceManager>> _allDevices;
+
+    /// <param name="allDevices">All sticks of this server, for the info HELLO; null = only this one.</param>
     public ClientSession(ClientConnection conn, DeviceManager manager, string serverVersion, ILogger log,
-        CancellationToken serverToken)
+        CancellationToken serverToken, Func<IReadOnlyList<DeviceManager>>? allDevices = null)
     {
         _conn = conn;
         _net = conn.Stream;
         _manager = manager;
+        _allDevices = allDevices ?? (() => [manager]);
         _serverVersion = serverVersion;
         _log = log;
         _cts = CancellationTokenSource.CreateLinkedTokenSource(serverToken);
@@ -84,6 +92,11 @@ internal sealed class ClientSession : IStreamOwner
         try
         {
             var first = await ReadHelloAsync(ct);
+            if (V2.IsInfo(first))
+            {
+                await SendDeviceListAsync(ct);
+                return;
+            }
             _v2 = V2.IsHello(first);
 
             Task writer;
@@ -203,10 +216,39 @@ internal sealed class ClientSession : IStreamOwner
         V2.WriteHeader(header, V2HeaderFlags.None);
         await _net.WriteAsync(header, ct);
 
-        var serial = _manager.OpenSerial ?? _manager.Config.Serial;
-        await _net.WriteAsync(Frame(new ServerInfoMessage("rtltcp.server", _serverVersion,
-            new DeviceInfo(_manager.Config.Name, serial), ServerInfoMessage.AuthNone)), ct);
+        await _net.WriteAsync(Frame(new ServerInfoMessage("rtltcp.server", _serverVersion, DeviceInfoOf(_manager),
+            ServerInfoMessage.AuthNone)), ct);
     }
+
+    private DeviceInfo DeviceInfoOf(DeviceManager m) =>
+        new(m.Config.Name, m.OpenSerial ?? m.Config.Serial, m == _manager && _conn.LocalPort > 0 ? _conn.LocalPort : m.Config.Port,
+            m.Config.Remote is null ? DeviceSources.Usb : DeviceSources.Remote, m.Origin());
+
+    /// <summary>Info HELLO: header, server_info, all sticks, close. Never takes a stick.</summary>
+    private async Task SendDeviceListAsync(CancellationToken ct)
+    {
+        _v2 = true;
+        await HandshakeV2Async(ct);
+        var list = _allDevices().Select(m =>
+        {
+            var info = DeviceInfoOf(m);
+            var state = m.State switch
+            {
+                DeviceState.Ready => DeviceStates.Ready,
+                DeviceState.Starting => DeviceStates.Starting,
+                DeviceState.NotReady => DeviceStates.DeviceNotReady,
+                DeviceState.Lost => DeviceStates.DeviceLost,
+                _ => "idle",
+            };
+            return new DeviceListEntry(info.Port ?? m.Config.Port, info.Name, info.Serial, info.Source!, info.Remote, state,
+                m.Owner?.RemoteAddress, m.Tuner?.Name);
+        }).ToList();
+        await _net.WriteAsync(Frame(new DevicesMessage(list)), ct);
+        _log.LogDebug("{Client}: device list sent ({Count} stick(s))", RemoteAddress, list.Count);
+        await GracefulCloseAsync();
+    }
+
+    public string Protocol => _v2 ? "rtl_tcp Jay extended" : "rtl_tcp";
 
     private async Task<(FrameType Type, byte[] Payload)> ReadFrameAsync(CancellationToken ct)
     {

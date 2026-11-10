@@ -39,6 +39,18 @@ und die IQ-Payloads in denselben Puffer bzw. Callback gibt wie bisher.
 Die Gain-Liste kommt bei v2 nicht im Header, sondern in `status.tuner.gains` (Zehntel-dB), der Tuner-Typ in
 `status.tuner.type` (gleiche Nummern wie im v1-Header).
 
+## Stick anzeigen und auswählen
+
+- **Anzeigename:** `server_info.device.name` ist der Name aus der Weboberfläche des Servers (z. B. „Dach-Antenne“
+  oder „Standort1 Stick 1“). Ihn statt Adresse und Port anzeigen.
+- **Herkunft** (ab rtltcp.server 1.7): `device.source` = `usb` (Stick am Server) oder `remote` (Stick an einem anderen
+  Standort, dann `device.remote.site` und `device.remote.instance`), z. B. „Standort1 Stick 1 · über Funkfreund Max“.
+- **Alle Sticks eines Servers** (z. B. für eine Auswahlliste): Verbindung zu irgendeinem Stick-Port, statt HELLO
+  `F2 52 54 4C 49` („RTLI“) senden → Header, `server_info`, `devices` mit Port, Name, Quelle, Zustand und
+  `busy_by`, danach schließt der Server. Belegt nichts. Antwortet der Server mit `RTL0`, ist es ein klassisches
+  `rtl_tcp` (Verbindung schließen, nur der eingetragene Port ist bekannt).
+- Fehlen die Felder (ältere Server), nur `name` anzeigen.
+
 ## Meldungen → Anzeige
 
 | JSON                                          | Bedeutung                              | Empfehlung in der App                                  |
