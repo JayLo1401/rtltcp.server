@@ -592,6 +592,28 @@ async function renderSettings() {
   const enCode = h('input', { type: 'text', placeholder: 'K7QM-4XPD', required: true, autocomplete: 'off' });
   const enPw = h('input', { type: 'password', required: true, autocomplete: 'new-password' });
   const enBtn = h('button', { class: 'btn primary', type: 'submit', text: 'Instanz hinzufügen' });
+  // credentials file from the instance page of rtl.over.internet (docs/protocol.md §1.1 there): fills the fields
+  const credInfo = h('div');
+  const credFile = h('input', { type: 'file', accept: '.json,application/json', onchange: async (e) => {
+    const file = e.target.files[0];
+    credInfo.replaceChildren();
+    if (!file) return;
+    try {
+      let c;
+      try { c = JSON.parse(await file.text()); } catch { throw new Error('Die Datei ist kein gültiges JSON.'); }
+      if (!c || c.format !== 'rtl.over.internet/credentials') throw new Error('Das ist keine Zugangsdatei von rtl.over.internet.');
+      if (c.version !== 1) throw new Error(`Zugangsdatei Version ${c.version} wird nicht unterstützt – bitte den Server aktualisieren.`);
+      if (typeof c.server !== 'string' || typeof c.instance_code !== 'string' || typeof c.password !== 'string')
+        throw new Error('In der Zugangsdatei fehlen Adresse, Instanz-Code oder Passwort.');
+      enUrl.value = c.server; enCode.value = c.instance_code; enPw.value = c.password;
+      const name = c.instance && c.instance.name ? `„${c.instance.name}“ ` : '';
+      credInfo.append(h('div', { class: 'notice ok', text: `Zugangsdaten für Instanz ${name}übernommen. Mit „Instanz hinzufügen“ anmelden.` }));
+    } catch (err) {
+      credInfo.append(h('div', { class: 'notice err', text: err.message }));
+    } finally {
+      e.target.value = ''; // the file (with the password) is not kept
+    }
+  } });
   const srvName = h('input', { type: 'text', value: remote.serverName, placeholder: inst.serverName, maxlength: 64 });
   const instForm = h('form', {
     class: 'card',
@@ -610,6 +632,9 @@ async function renderSettings() {
   inst.unavailable ? h('div', { class: 'notice err', text: inst.unavailable }) : null,
   inst.instances.map(instCard),
   h('h3', { class: 'section-title', text: 'Instanz hinzufügen' }),
+  h('div', { class: 'form-grid' },
+    field('Zugangsdatei', credFile, 'optional: rtl-over-internet-….json von der Instanzseite, füllt die Felder darunter aus')),
+  credInfo,
   h('div', { class: 'form-grid' },
     field('Adresse', enUrl), field('Instanz-Code', enCode), field('Passwort', enPw, 'der Instanz'),
     field('Name dieses Servers', srvName, 'sehen die anderen Standorte, leer = Computername')),

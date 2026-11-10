@@ -7,6 +7,11 @@ mit Datum. Steht dort nichts, werden die Commit-Titel seit dem letzten Release e
 
 ## [Unreleased]
 
+### Neu
+
+- Instanz hinzufügen per Zugangsdatei von rtl.over.internet: Datei hochladen, Adresse, Instanz-Code und Passwort
+  werden ausgefüllt. Gespeichert wird weiterhin nur das Geräte-Token.
+
 ## [1.9.1] – 2026-11-10
 
 ### Geändert
