@@ -19,6 +19,9 @@ public interface ISdrDevice : IDisposable
     IBulkStream StartStream(IBulkSink sink);
 
     void PowerDown();
+
+    /// <summary>Location and antenna reported by the device's own server (remote sticks); null = not known.</summary>
+    DeviceDetails? Details => null;
 }
 
 public interface ISdrDeviceSource

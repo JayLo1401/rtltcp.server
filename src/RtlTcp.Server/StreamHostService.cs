@@ -71,7 +71,11 @@ public sealed class StreamHostService(ServerConfigHolder config, ILoggerFactory 
             var source = dc.Remote is { } remote ? _remote.SourceFor(remote, loggers.CreateLogger($"remote.{dc.Port}")) : _source!;
             var manager = new DeviceManager(dc, source, loggers.CreateLogger($"device.{dc.Port}"), () => others);
             var server = new StreamServer(manager, Version, loggers.CreateLogger($"stream.{dc.Port}"), () => Managers);
-            if (dc.Remote is { } r) manager.Origin = () => _remote.OriginOf(r);
+            if (dc.Remote is { } r)
+            {
+                manager.Origin = () => _remote.OriginOf(r);
+                manager.AnnouncedDetails = () => _remote.AnnouncedDetailsOf(r);
+            }
             try
             {
                 server.Start();

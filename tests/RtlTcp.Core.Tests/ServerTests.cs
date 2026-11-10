@@ -14,7 +14,7 @@ public sealed class ServerTests : IAsyncLifetime
 
     private readonly DeviceConfig _config = new()
     {
-        Name = "Test", Bind = "127.0.0.1", Port = 0, IdleTimeoutSeconds = 1, V1WaitForDeviceSeconds = 2,
+        Name = "Test", Location = "Wien Dach", Antenna = " ", Bind = "127.0.0.1", Port = 0, IdleTimeoutSeconds = 1, V1WaitForDeviceSeconds = 2,
         Defaults = new DeviceDefaults { Frequency = 92_600_000, SampleRate = 2_400_000, Gain = 144 },
     };
 
@@ -232,6 +232,8 @@ public sealed class ServerTests : IAsyncLifetime
         Assert.Equal(Port, info.Device.Port);
         Assert.Equal(DeviceSources.Usb, info.Device.Source);
         Assert.Null(info.Device.Remote);
+        Assert.Equal("Wien Dach", info.Device.Location);
+        Assert.Null(info.Device.Antenna); // blank = not set, field omitted
         Assert.Equal("none", info.Auth);
     }
 

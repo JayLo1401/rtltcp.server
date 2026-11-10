@@ -3,6 +3,7 @@ using System.Net.Quic;
 using System.Text.Json;
 using RtlTcp.Core.Config;
 using RtlTcp.Core.Device;
+using RtlTcp.Core.Protocol;
 using RtlTcp.Core.Remote;
 using RtlTcp.Core.Remote.Broker;
 using RtlTcp.Core.Usb;
@@ -80,6 +81,11 @@ public sealed class RemoteSharing(string dataDir, ILoggerFactory loggers) : IDis
         return new(b?.InstanceName, share?.ProviderName);
     }
 
+    /// <summary>Location/antenna of a remote stick as announced by its provider in the instance.</summary>
+    public DeviceDetails? AnnouncedDetailsOf(RemoteDeviceConfig remote) =>
+        remote.Instance.Length > 0 && Broker(remote.Instance)?.Shares.FirstOrDefault(s => s.ShareId == remote.Share) is { } s
+            ? DeviceDetails.Of(s.Location, s.Antenna) : null;
+
     // ---------------------------------------------------------------- sources (user side)
 
     public ISdrDeviceSource SourceFor(RemoteDeviceConfig remote, ILogger deviceLog)
@@ -127,7 +133,8 @@ public sealed class RemoteSharing(string dataDir, ILoggerFactory loggers) : IDis
             var shared = inst.Devices.ToHashSet(StringComparer.OrdinalIgnoreCase);
             var provider = new BrokerClient.Provider(
                 () => [.. shared.Select(s => (Serial: s, Manager: Find(s))).Where(x => x.Manager is not null)
-                    .Select(x => new AnnouncedShare(x.Serial, x.Manager!.Config.Name, x.Manager.Tuner?.Name ?? "", StateOf(x.Manager)))],
+                    .Select(x => new AnnouncedShare(x.Serial, x.Manager!.Config.Name, x.Manager.Tuner?.Name ?? "", StateOf(x.Manager),
+                        x.Manager.Details.Location, x.Manager.Details.Antenna))],
                 s => shared.Contains(s) ? Find(s) : null);
             var client = new BrokerClient(new BrokerClient.Options(inst.Url, token, ServerNameOf(r), version), _identity, provider,
                 loggers.CreateLogger($"instance.{(inst.Name.Length > 0 ? inst.Name : inst.Id)}"));

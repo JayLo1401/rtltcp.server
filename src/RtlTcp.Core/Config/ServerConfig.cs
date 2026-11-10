@@ -71,6 +71,13 @@ public sealed class DeviceConfig
     /// <summary>USB serial number. Empty = first stick that is not claimed by another entry.</summary>
     public string Serial { get; set; } = "";
     public string Name { get; set; } = "RTL-SDR";
+
+    /// <summary>Where the antenna is, e.g. "Wien Dach" (free text, shown to clients). For remote sticks the provider's value wins.</summary>
+    public string Location { get; set; } = "";
+
+    /// <summary>Antenna type, e.g. "DAB-Rundstrahler", "Discone" (free text, shown to clients).</summary>
+    public string Antenna { get; set; } = "";
+
     public bool Enabled { get; set; } = true;
     public string Bind { get; set; } = "0.0.0.0";
     public int Port { get; set; } = 1234;

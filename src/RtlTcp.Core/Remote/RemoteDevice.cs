@@ -169,6 +169,9 @@ internal sealed class RemoteDevice : ISdrDevice
     public string TunerName { get; }
     public IReadOnlyList<int> Gains { get; }
 
+    /// <summary>Location and antenna from the provider's server_info.</summary>
+    public DeviceDetails? Details { get; private init; }
+
     // ---------------------------------------------------------------- open
 
     public static async Task<RemoteDevice> OpenAsync(IRemoteConnector connector, ILogger log, CancellationToken ct)
@@ -189,6 +192,7 @@ internal sealed class RemoteDevice : ISdrDevice
 
             var name = share;
             var serial = share;
+            DeviceDetails? details = null;
             string? lastStatus = null;
             while (true)
             {
@@ -212,11 +216,12 @@ internal sealed class RemoteDevice : ISdrDevice
                 {
                     case ServerInfoMessage info:
                         name = info.Device.Name;
+                        details = DeviceDetails.Of(info.Device.Location, info.Device.Antenna);
                         if (info.Device.Serial.Length > 0) serial = info.Device.Serial;
                         break;
                     case StatusMessage { State: DeviceStates.Ready, Tuner: { } tuner }:
                         log.LogInformation("Remote stick {Name} ({Remote}) ready", name, connector.Describe);
-                        return new RemoteDevice(link, stream, serial, tuner, name, log);
+                        return new RemoteDevice(link, stream, serial, tuner, name, log) { Details = details };
                     case StatusMessage { State: DeviceStates.DeviceNotReady or DeviceStates.DeviceLost } s:
                         // no stick there right now: report at once, the source retries with backoff
                         throw new RemoteOpenException($"Remote stick: {s.Message}");

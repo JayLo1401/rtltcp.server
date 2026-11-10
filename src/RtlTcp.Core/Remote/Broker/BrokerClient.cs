@@ -15,10 +15,11 @@ namespace RtlTcp.Core.Remote.Broker;
 
 /// <summary>A stick shared in an instance, as announced by the broker (protocol.md §2.3).</summary>
 public sealed record InstanceShare(string ShareId, int ProviderId, string ProviderName, string StickId, string Name,
-    string Tuner, string State, bool Online);
+    string Tuner, string State, bool Online, string? Location = null, string? Antenna = null);
 
 /// <summary>One of our sticks, announced to an instance (protocol.md §2.2).</summary>
-public sealed record AnnouncedShare(string StickId, string Name, string Tuner, string State);
+public sealed record AnnouncedShare(string StickId, string Name, string Tuner, string State, string? Location = null,
+    string? Antenna = null);
 
 public sealed class EnrollException(string message) : Exception(message);
 
@@ -265,11 +266,16 @@ public sealed class BrokerClient : IAsyncDisposable
                 {
                     var arr = new JsonArray();
                     foreach (var s in _provider.Shares().Take(64))
-                        arr.Add(new JsonObject
+                    {
+                        var share = new JsonObject
                         {
                             ["stick_id"] = s.StickId, ["name"] = Clip(s.Name, 100), ["tuner"] = Clip(s.Tuner, 32),
                             ["state"] = Clip(s.State, 32), ["compression"] = false,
-                        });
+                        };
+                        if (s.Location is { } loc) share["location"] = Clip(loc, 100);
+                        if (s.Antenna is { } ant) share["antenna"] = Clip(ant, 100);
+                        arr.Add(share);
+                    }
                     var msg = new JsonObject { ["type"] = "announce", ["shares"] = arr };
                     var text = msg.ToJsonString();
                     if (text != _lastAnnounce)
@@ -305,7 +311,7 @@ public sealed class BrokerClient : IAsyncDisposable
                 Shares = [.. arr.OfType<JsonObject>().Select(s => new InstanceShare(
                     (string)s["share_id"]!, (int?)s["provider"]?["device_id"] ?? 0, (string?)s["provider"]?["name"] ?? "",
                     (string?)s["stick_id"] ?? "", (string?)s["name"] ?? "", (string?)s["tuner"] ?? "",
-                    (string?)s["state"] ?? "", (bool?)s["online"] ?? false))];
+                    (string?)s["state"] ?? "", (bool?)s["online"] ?? false, (string?)s["location"], (string?)s["antenna"]))];
                 break;
 
             case "stream_request":

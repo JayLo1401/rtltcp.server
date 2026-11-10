@@ -18,7 +18,19 @@ public abstract record V2Message;
 /// <param name="Port">Stream port of this stick on the server.</param>
 /// <param name="Source"><see cref="DeviceSources.Usb"/> or <see cref="DeviceSources.Remote"/>.</param>
 /// <param name="Remote">Only for remote sticks: where it comes from.</param>
-public sealed record DeviceInfo(string Name, string Serial, int? Port = null, string? Source = null, RemoteOrigin? Remote = null);
+/// <param name="Location">Where the antenna is (free text); missing = not set.</param>
+/// <param name="Antenna">Antenna type (free text); missing = not set.</param>
+public sealed record DeviceInfo(string Name, string Serial, int? Port = null, string? Source = null, RemoteOrigin? Remote = null,
+    string? Location = null, string? Antenna = null);
+
+/// <summary>Location and antenna of a stick (free text, null = not set).</summary>
+public sealed record DeviceDetails(string? Location, string? Antenna)
+{
+    public static DeviceDetails Of(string? location, string? antenna) =>
+        new(string.IsNullOrWhiteSpace(location) ? null : location.Trim(), string.IsNullOrWhiteSpace(antenna) ? null : antenna.Trim());
+
+    public bool IsEmpty => Location is null && Antenna is null;
+}
 
 /// <summary>Origin of a stick shared by another site: instance on rtl.over.internet and providing server.</summary>
 public sealed record RemoteOrigin(string? Instance, string? Site);
@@ -31,7 +43,7 @@ public static class DeviceSources
 
 /// <summary>One stick of the server in a <see cref="DevicesMessage"/>.</summary>
 public sealed record DeviceListEntry(int Port, string Name, string Serial, string Source, RemoteOrigin? Remote, string State,
-    string? BusyBy, string? Tuner);
+    string? BusyBy, string? Tuner, string? Location = null, string? Antenna = null);
 
 /// <summary>Answer to the info HELLO (docs/protocol-v2.md §2.1): all sticks of the server, then the server closes.</summary>
 public sealed record DevicesMessage(IReadOnlyList<DeviceListEntry> Devices) : V2Message;

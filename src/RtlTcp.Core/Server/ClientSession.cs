@@ -220,10 +220,12 @@ internal sealed class ClientSession : IStreamOwner
             ServerInfoMessage.AuthNone)), ct);
     }
 
-    private DeviceInfo DeviceInfoOf(DeviceManager m) =>
-        new(m.Config.Name, m.OpenSerial ?? m.Config.Serial, m == _manager && _conn.LocalPort > 0 ? _conn.LocalPort : m.Config.Port,
-            m.Config.Remote is null ? DeviceSources.Usb : DeviceSources.Remote, m.Origin());
-
+    private DeviceInfo DeviceInfoOf(DeviceManager m)
+    {
+        var details = m.Details;
+        return new(m.Config.Name, m.OpenSerial ?? m.Config.Serial, m == _manager && _conn.LocalPort > 0 ? _conn.LocalPort : m.Config.Port,
+            m.Config.Remote is null ? DeviceSources.Usb : DeviceSources.Remote, m.Origin(), details.Location, details.Antenna);
+    }
     /// <summary>Info HELLO: header, server_info, all sticks, close. Never takes a stick.</summary>
     private async Task SendDeviceListAsync(CancellationToken ct)
     {
@@ -241,7 +243,7 @@ internal sealed class ClientSession : IStreamOwner
                 _ => "idle",
             };
             return new DeviceListEntry(info.Port ?? m.Config.Port, info.Name, info.Serial, info.Source!, info.Remote, state,
-                m.Owner?.RemoteAddress, m.Tuner?.Name);
+                m.Owner?.RemoteAddress, m.Tuner?.Name, info.Location, info.Antenna);
         }).ToList();
         await _net.WriteAsync(Frame(new DevicesMessage(list)), ct);
         _log.LogDebug("{Client}: device list sent ({Count} stick(s))", RemoteAddress, list.Count);

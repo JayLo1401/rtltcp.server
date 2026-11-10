@@ -1,6 +1,6 @@
 # rtltcp_v2 – Protocol Specification
 
-Status: **Draft 0.3** · Applies to: rtltcp.server ≥ 1.6 (stick details and info HELLO ≥ 1.7), clients (e.g. home.radio)
+Status: **Draft 0.3** · Applies to: rtltcp.server ≥ 1.7 (stick details and info HELLO ≥ 1.8, location/antenna ≥ 1.9), clients (e.g. home.radio)
 
 Names: **rtl_tcp** = v1, **rtl_tcp Jay extended** = v2 (on the wire still `RTL2` / `HELLO_V2`).
 
@@ -12,7 +12,7 @@ rtl_tcp Jay extended (v2) extends the classic `rtl_tcp` protocol (here called **
    - a **v2 client** talking to a classic `rtl_tcp` server detects this and falls back to v1.
 
 There is **no client authentication**. Earlier drafts had an optional SCRAM login; it was removed in
-rtltcp.server 1.6. Access over the internet is handled between rtltcp.server installations (rtl.over.internet),
+rtltcp.server 1.7. Access over the internet is handled between rtltcp.server installations (rtl.over.internet),
 clients only connect locally. Clients should always send HELLO and show which protocol the server answered with.
 
 All multi-byte integers are **big-endian** (network byte order), as in v1.
@@ -139,9 +139,10 @@ message types must be ignored.
 {
   "type": "server_info",
   "server": "rtltcp.server",
-  "version": "1.6.0",
+  "version": "1.9.0",
   "device": { "name": "Standort1 Stick 1", "serial": "00000001", "port": 1235, "source": "remote",
-              "remote": { "instance": "Funkfreund Max", "site": "Standort1" } },
+              "remote": { "instance": "Funkfreund Max", "site": "Standort1" },
+              "location": "Wien Dach", "antenna": "DAB-Rundstrahler" },
   "auth": "none"
 }
 ```
@@ -150,12 +151,17 @@ message types must be ignored.
 |-------------------|------------------------------------------------------------------------------------------|
 | `device.name`     | display name of the stick, set in the server's web GUI – show this to the user           |
 | `device.serial`   | serial of the stick (at the providing site for remote sticks); may be empty              |
-| `device.port`     | stream port of this stick on the server (since 1.7)                                      |
-| `device.source`   | `usb` = stick on this server, `remote` = stick shared by another site (since 1.7)         |
+| `device.port`     | stream port of this stick on the server (since 1.8)                                      |
+| `device.source`   | `usb` = stick on this server, `remote` = stick shared by another site (since 1.8)         |
 | `device.remote`   | only for `remote`: `instance` on rtl.over.internet and providing `site` (both may be missing) |
+| `device.location` | where the antenna is, free text, e.g. `Wien Dach` (since 1.9; missing = not set)         |
+| `device.antenna`  | antenna type, free text, e.g. `Discone` (since 1.9; missing = not set)                   |
 | `auth`            | always `"none"` (kept for clients written against Draft 0.1)                             |
 
 Older servers send only `name` and `serial`; clients must treat the other fields as optional.
+
+For `remote` sticks, `location` and `antenna` are the values of the **providing** server (from rtl.over.internet's
+share list or the last direct connection); the local server's own entries are only used if the provider sends none.
 
 ### 4.2 `status` (S → C)
 
@@ -209,7 +215,7 @@ longer sent.)
 ```json
 { "type": "devices", "devices": [
     { "port": 1234, "name": "Lokaler RTL-Stick", "serial": "00000001", "source": "usb",
-      "state": "ready", "busy_by": "192.168.1.20", "tuner": "R820T" },
+      "location": "Wien Dach", "antenna": "Discone", "state": "ready", "busy_by": "192.168.1.20", "tuner": "R820T" },
     { "port": 1235, "name": "Standort1 Stick 1", "serial": "00000001", "source": "remote",
       "remote": { "instance": "Funkfreund Max", "site": "Standort1" }, "state": "idle" } ] }
 ```

@@ -99,6 +99,27 @@ public sealed class DeviceManager : IAsyncDisposable
     /// <summary>For remote sticks: instance and providing site (looked up when asked, names can change).</summary>
     public Func<Protocol.RemoteOrigin?> Origin { get; set; } = () => null;
 
+    /// <summary>For remote sticks: location/antenna as announced by the provider (rtl.over.internet), if known.</summary>
+    public Func<DeviceDetails?> AnnouncedDetails { get; set; } = () => null;
+
+    /// <summary>What the provider reported in the last direct connection (kept after the connection ends).</summary>
+    private DeviceDetails? _remoteDetails;
+
+    /// <summary>
+    /// Location and antenna shown to clients. USB stick: this server's settings. Remote stick: the provider's values
+    /// (last connection, else rtl.over.internet), this server's settings only if the provider sends none.
+    /// </summary>
+    public DeviceDetails Details
+    {
+        get
+        {
+            var own = DeviceDetails.Of(Config.Location, Config.Antenna);
+            if (Config.Remote is null) return own;
+            var remote = Volatile.Read(ref _remoteDetails) ?? AnnouncedDetails();
+            return remote is null || remote.IsEmpty ? own : remote;
+        }
+    }
+
     public DeviceState State { get; private set; } = DeviceState.Idle;
     public string StateMessage { get; private set; } = "Device idle";
 
@@ -286,6 +307,7 @@ public sealed class DeviceManager : IAsyncDisposable
 
         _device = dev;
         OpenSerial = dev.Serial;
+        if (dev.Details is { } details) Volatile.Write(ref _remoteDetails, details);
         Tuner = new TunerSnapshot(dev.TunerType, dev.TunerName, [.. dev.Gains]);
         _log.LogInformation("{Device}: opened stick {Serial} ({Tuner})", Config.Name, dev.Serial, dev.TunerName);
         Replay();

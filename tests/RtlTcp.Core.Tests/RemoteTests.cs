@@ -40,7 +40,8 @@ public sealed class RemoteTests : IAsyncLifetime
         RemoteDeviceSource.OpenTimeout = TimeSpan.FromSeconds(3);
         _provider = new DeviceManager(new DeviceConfig
         {
-            Serial = Share, Name = "Standort1 Stick 1", Bind = "127.0.0.1", Port = 0, IdleTimeoutSeconds = 1,
+            Serial = Share, Name = "Standort1 Stick 1", Location = "Wien Dach", Antenna = "Discone",
+            Bind = "127.0.0.1", Port = 0, IdleTimeoutSeconds = 1,
         }, _stick, NullLogger.Instance);
         _host = new ShareHost(new IPEndPoint(IPAddress.Loopback, 0), Site1, () => _peers,
             s => s == Share ? _provider : null, "test", NullLogger.Instance);
@@ -125,6 +126,21 @@ public sealed class RemoteTests : IAsyncLifetime
         Assert.Equal("RTL0"u8.ToArray(), header[..4]);
         Assert.Equal(new byte[] { 0, 0, 0, 5, 0, 0, 0, 3 }, header[4..]);
         Assert.All(await c.ReadAsync(32768), b => Assert.Equal(0x7F, b));
+    }
+
+    [Fact]
+    public async Task Location_and_antenna_of_the_provider_reach_clients_of_the_remote_stick()
+    {
+        if (!Supported) return;
+        var port = StartConsumer();
+        await using (var first = await ConnectV2Async(port))
+            await first.ExpectAsync<StatusMessage>(s => s.State == DeviceStates.Ready);
+        Assert.Equal(new DeviceDetails("Wien Dach", "Discone"), _consumer!.Details);
+
+        await using var c = await ConnectV2Async(port);
+        var info = await c.ExpectAsync<ServerInfoMessage>();
+        Assert.Equal("Wien Dach", info.Device.Location);
+        Assert.Equal("Discone", info.Device.Antenna);
     }
 
     [Fact]

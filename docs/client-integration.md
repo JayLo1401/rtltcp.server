@@ -43,12 +43,15 @@ Die Gain-Liste kommt bei v2 nicht im Header, sondern in `status.tuner.gains` (Ze
 
 - **Anzeigename:** `server_info.device.name` ist der Name aus der Weboberfläche des Servers (z. B. „Dach-Antenne“
   oder „Standort1 Stick 1“). Ihn statt Adresse und Port anzeigen.
-- **Herkunft** (ab rtltcp.server 1.7): `device.source` = `usb` (Stick am Server) oder `remote` (Stick an einem anderen
+- **Herkunft** (ab rtltcp.server 1.8): `device.source` = `usb` (Stick am Server) oder `remote` (Stick an einem anderen
   Standort, dann `device.remote.site` und `device.remote.instance`), z. B. „Standort1 Stick 1 · über Funkfreund Max“.
 - **Alle Sticks eines Servers** (z. B. für eine Auswahlliste): Verbindung zu irgendeinem Stick-Port, statt HELLO
   `F2 52 54 4C 49` („RTLI“) senden → Header, `server_info`, `devices` mit Port, Name, Quelle, Zustand und
   `busy_by`, danach schließt der Server. Belegt nichts. Antwortet der Server mit `RTL0`, ist es ein klassisches
   `rtl_tcp` (Verbindung schließen, nur der eingetragene Port ist bekannt).
+- **Standort und Antenne** (ab 1.9): `device.location` und `device.antenna`, Freitext, auch in `devices`. Fehlen sie:
+  „nicht angegeben“; bei v1 (`RTL0`): „Server unterstützt dies nicht“. Bei entfernten Sticks sind es die Werte des
+  teilenden Servers.
 - Fehlen die Felder (ältere Server), nur `name` anzeigen.
 
 ## Meldungen → Anzeige

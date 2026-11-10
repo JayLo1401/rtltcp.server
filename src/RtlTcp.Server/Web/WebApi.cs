@@ -23,7 +23,7 @@ public static class WebApi
         int Port, string Name, string Serial, bool Enabled, string State, string Message,
         string? Client, DateTimeOffset? ClientSince, long BytesStreamed,
         string? Tuner, ulong? Frequency, uint? SampleRate, int? Gain, bool BiasTee, string? Error,
-        string? ClientProtocol = null, string? Origin = null);
+        string? ClientProtocol = null, string? Origin = null, string? Location = null, string? Antenna = null);
 
     public sealed record StatusDto(string Version, List<DeviceStatusDto> Devices, List<StickDto> Sticks,
         string? UpdateVersion, bool UpdateCanInstall, RemoteStatusDto Remote);
@@ -164,7 +164,8 @@ public static class WebApi
                     !d.Enabled ? "Deaktiviert" : m?.StateMessage ?? error ?? "Nicht gestartet",
                     m?.Owner?.RemoteAddress, m?.OwnerSince, m?.BytesStreamed ?? 0, m?.Tuner?.Name,
                     m?.Tuning.Frequency, m?.Tuning.SampleRate, m?.Tuning.Gain, m?.Tuning.BiasTee ?? false, error,
-                    m?.Owner?.Protocol, d.Remote is null ? null : OriginText(m?.Origin()));
+                    m?.Owner?.Protocol, d.Remote is null ? null : OriginText(m?.Origin()),
+                    m?.Details.Location ?? NullIfEmpty(d.Location), m?.Details.Antenna ?? NullIfEmpty(d.Antenna));
             }).ToList();
             var configured = cfg.Current.Devices.Select(d => d.Serial).ToHashSet();
             // A stick that is open (by us) cannot be opened again to read its serial (Windows) → add our open sticks.
@@ -369,6 +370,8 @@ public static class WebApi
         return ip.IsIPv4MappedToIPv6 ? ip.MapToIPv4() : ip;
     }
 
+    private static string? NullIfEmpty(string s) => string.IsNullOrWhiteSpace(s) ? null : s.Trim();
+
     private static string OriginText(RtlTcp.Core.Protocol.RemoteOrigin? o) =>
         o is null ? "entfernt" : $"entfernt: {o.Site ?? "?"}{(o.Instance is { } i ? $" über {i}" : "")}";
 
@@ -400,6 +403,7 @@ public static class WebApi
         foreach (var d in devices)
         {
             if (string.IsNullOrWhiteSpace(d.Name)) return "Jedes Gerät braucht einen Namen";
+            if (d.Location.Length > 100 || d.Antenna.Length > 100) return $"{d.Name}: Standort und Antenne höchstens 100 Zeichen";
             if (d.Port is < 1 or > 65535) return $"{d.Name}: ungültiger Port {d.Port}";
             if (webPorts.Contains(d.Port)) return $"{d.Name}: Port {d.Port} wird von der Weboberfläche verwendet";
             if (!IPAddress.TryParse(d.Bind, out _)) return $"{d.Name}: ungültige Adresse {d.Bind}";
