@@ -7,6 +7,11 @@ mit Datum. Steht dort nichts, werden die Commit-Titel seit dem letzten Release e
 
 ## [Unreleased]
 
+## [1.11.2] – 2026-11-10
+
+### Behoben
+- libmsquic unter Linux automatisch installieren
+
 ## [1.11.1] – 2026-11-10
 
 ### Behoben
