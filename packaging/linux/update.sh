@@ -22,6 +22,35 @@ status() { # <state> <message>
 }
 trap 'status failed "Update-Skript abgebrochen (Zeile $LINENO), siehe journalctl -u rtltcp-server-update"' ERR
 
+TMP="$(mktemp -d)"
+trap 'rm -rf "$TMP"' EXIT
+
+# libmsquic (QUIC, sharing sticks over the internet) only exists in Microsoft's repository, so the package can
+# only suggest it. Best effort on every check, so existing installations get it too.
+ensure_msquic() {
+    dpkg -s libmsquic >/dev/null 2>&1 && return 0
+    [ -r /etc/os-release ] || return 1
+    local ID="" VERSION_ID="" distro ver
+    . /etc/os-release
+    case "$ID" in
+        ubuntu) distro=ubuntu; ver="$VERSION_ID" ;;
+        debian|raspbian) distro=debian; ver="${VERSION_ID%%.*}" ;;
+        *) return 1 ;;
+    esac
+    [ -n "$ver" ] || return 1
+    if ! dpkg -s packages-microsoft-prod >/dev/null 2>&1; then
+        curl -fsSL --retry 3 -o "$TMP/ms.deb" "https://packages.microsoft.com/config/$distro/$ver/packages-microsoft-prod.deb" || return 1
+        dpkg -i "$TMP/ms.deb" || return 1
+    fi
+    apt-get update -qq || return 1
+    DEBIAN_FRONTEND=noninteractive apt-get install -y libmsquic || return 1
+    MSQUIC_NEW=1
+}
+MSQUIC_NEW=0
+if ! dpkg -s libmsquic >/dev/null 2>&1; then
+    if ensure_msquic; then echo "libmsquic installiert"; else echo "libmsquic nicht installierbar, Teilen über das Internet bleibt aus"; fi
+fi
+
 ARCH="$(dpkg --print-architecture)"
 INSTALLED="$(dpkg-query -W -f='${Version}' rtltcp-server 2>/dev/null || echo 0)"
 status checking "Suche nach Updates (installiert: $INSTALLED)"
@@ -38,12 +67,12 @@ fi
 case "$URL" in "$BASE"/*) ;; *) status failed "Unerwartete Download-Adresse"; exit 1 ;; esac
 
 if dpkg --compare-versions "$VERSION" le "$INSTALLED"; then
+    # QUIC is detected at startup, so a freshly installed libmsquic needs a restart
+    [ "$MSQUIC_NEW" = 1 ] && systemctl restart rtltcp-server
     status current "Bereits aktuell (Version $INSTALLED)"
     exit 0
 fi
 
-TMP="$(mktemp -d)"
-trap 'rm -rf "$TMP"' EXIT
 DEB="$TMP/rtltcp-server_${VERSION}_${ARCH}.deb"
 status installing "Lade Version $VERSION"
 curl -fsSL --retry 3 -o "$DEB" "$URL"

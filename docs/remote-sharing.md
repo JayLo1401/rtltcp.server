@@ -71,7 +71,7 @@ Samplerate.
 | System | QUIC |
 |---|---|
 | Windows 11, Server 2022 | eingebaut |
-| Linux (Debian/Ubuntu/Raspberry Pi OS) | Paket `libmsquic` aus dem Microsoft-Repository (`packages.microsoft.com`) |
+| Linux (Debian/Ubuntu/Raspberry Pi OS) | Paket `libmsquic` aus dem Microsoft-Repository (`packages.microsoft.com`). Installer und Update richten es automatisch ein. |
 | Home-Assistant-Add-on | im Image enthalten |
 
 Ohne QUIC läuft der Server normal weiter. Die Statusseite zeigt dann den Grund, warum Teilen nicht verfügbar ist.

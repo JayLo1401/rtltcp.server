@@ -59,6 +59,33 @@ if [ ! -f "$DEFAULTS" ] && ! dpkg -s rtltcp-server >/dev/null 2>&1; then
         "$WEB" "$STREAM" | $SUDO tee "$DEFAULTS" >/dev/null
 fi
 
+# libmsquic (QUIC, sharing sticks over the internet) only exists in Microsoft's repository, so the package can
+# only suggest it. Best effort: without it the server runs normally and the web interface says why.
+ensure_msquic() {
+    dpkg -s libmsquic >/dev/null 2>&1 && return 0
+    [ -r /etc/os-release ] || return 1
+    local ID="" VERSION_ID="" distro ver
+    . /etc/os-release
+    case "$ID" in
+        ubuntu) distro=ubuntu; ver="$VERSION_ID" ;;
+        debian|raspbian) distro=debian; ver="${VERSION_ID%%.*}" ;;
+        *) return 1 ;;
+    esac
+    [ -n "$ver" ] || return 1
+    if ! dpkg -s packages-microsoft-prod >/dev/null 2>&1; then
+        curl -fsSL -o "$TMP/ms.deb" "https://packages.microsoft.com/config/$distro/$ver/packages-microsoft-prod.deb" || return 1
+        $SUDO dpkg -i "$TMP/ms.deb" || return 1
+    fi
+    $SUDO apt-get update -qq || return 1
+    $SUDO apt-get install -y libmsquic || return 1
+}
+
+TMP="$(mktemp -d)"
+trap 'rm -rf "$TMP"' EXIT
+
+say "Prüfe libmsquic (Teilen über das Internet) …"
+ensure_msquic || say "  libmsquic nicht installierbar – Teilen über das Internet ist nicht verfügbar, alles andere läuft normal."
+
 MANIFEST="$(curl -fsSL "$BASE/linux/release/latest/version.json")"
 VERSION="$(printf '%s' "$MANIFEST" | sed -n 's/.*"version": *"\([^"]*\)".*/\1/p' | head -n1)"
 LINE="$(printf '%s\n' "$MANIFEST" | grep "\"$ARCH\"")" || die "Kein Paket für $ARCH in version.json."
@@ -66,8 +93,6 @@ URL="$(printf '%s' "$LINE" | sed -n 's/.*"url": *"\([^"]*\)".*/\1/p')"
 SHA="$(printf '%s' "$LINE" | sed -n 's/.*"sha256": *"\([^"]*\)".*/\1/p')"
 [ -n "$VERSION" ] && [ -n "$URL" ] && [ -n "$SHA" ] || die "version.json unvollständig."
 
-TMP="$(mktemp -d)"
-trap 'rm -rf "$TMP"' EXIT
 DEB="$TMP/rtltcp-server_${VERSION}_${ARCH}.deb"
 say "Lade rtltcp.server $VERSION ($ARCH) …"
 curl -fsSL -o "$DEB" "$URL"
