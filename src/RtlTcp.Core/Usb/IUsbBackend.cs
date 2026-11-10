@@ -23,6 +23,12 @@ public interface IUsbDeviceHandle : IDisposable
 
     /// <summary>Starts continuous bulk-in reads with <paramref name="bufferCount"/> transfers in flight.</summary>
     IBulkStream StartBulkIn(byte endpoint, int bufferSize, int bufferCount, IBulkSink sink);
+
+    /// <summary>
+    /// USB port reset (like unplugging and replugging). The handle is unusable afterwards and must be disposed.
+    /// Best effort: never throws.
+    /// </summary>
+    void Reset() { }
 }
 
 /// <summary>Receives bulk data on the USB event thread. Implementations must be fast and must copy the data.</summary>

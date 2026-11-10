@@ -20,6 +20,9 @@ public interface ISdrDevice : IDisposable
 
     void PowerDown();
 
+    /// <summary>Hardware reset before closing a stick that hangs (USB: port reset, like replugging). Never throws.</summary>
+    void Reset() { }
+
     /// <summary>Location and antenna reported by the device's own server (remote sticks); null = not known.</summary>
     DeviceDetails? Details => null;
 }
@@ -73,6 +76,7 @@ public sealed class RtlSdrDeviceSource(IUsbBackend backend) : ISdrDeviceSource
         public bool Execute(Command command) => dev.Execute(command);
         public IBulkStream StartStream(IBulkSink sink) => dev.StartStream(sink);
         public void PowerDown() => dev.PowerDown();
+        public void Reset() => dev.ResetUsb();
         public void Dispose() => dev.Dispose();
     }
 }

@@ -46,6 +46,10 @@ internal sealed class FakeDevice : ISdrDevice
 
     public void PowerDown() => PoweredDown = true;
 
+    public volatile bool WasReset;
+
+    public void Reset() => WasReset = true;
+
     public void Dispose()
     {
         Stream?.Dispose();
@@ -76,6 +80,13 @@ internal sealed class FakeStream : IBulkStream
     }
 
     public bool IsRunning => _running;
+
+    /// <summary>Stops delivering data without reporting an error (hung stick).</summary>
+    public void Freeze()
+    {
+        _running = false;
+        _thread.Join();
+    }
 
     public void Unplug()
     {

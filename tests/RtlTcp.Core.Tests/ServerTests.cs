@@ -195,6 +195,34 @@ public sealed class ServerTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Stick_that_stops_delivering_data_is_reset_and_reopened()
+    {
+        await using var c = await TestClient.ConnectAsync(Port);
+        await c.SendHelloAsync();
+        await c.ReadAsync(V2.HeaderSize);
+        await c.ExpectAsync<StatusMessage>(s => s.State == DeviceStates.Ready);
+        await c.SendCommandV2Async(RtlCommand.SetFrequency, 145_500_000);
+        var first = _source.Current!;
+        await Eventually(() => first.Executed.Contains(new Command(RtlCommand.SetFrequency, 145_500_000)));
+
+        DeviceManager.StallTimeout = TimeSpan.FromSeconds(2); // TestClient reads time out after 5 s
+        try
+        {
+            first.Stream!.Freeze();
+            await c.ExpectAsync<StatusMessage>(s => s.State == DeviceStates.DeviceRestored);
+        }
+        finally
+        {
+            DeviceManager.StallTimeout = TimeSpan.FromSeconds(5);
+        }
+        Assert.True(first.WasReset);
+        Assert.True(first.Disposed);
+        Assert.NotSame(first, _source.Current);
+        Assert.Contains(new Command(RtlCommand.SetFrequency, 145_500_000), _source.Current!.Executed);
+        Assert.Equal(1, await c.CountIqFramesAsync(1));
+    }
+
+    [Fact]
     public async Task Stick_is_closed_after_idle_timeout_and_reopened_by_next_client()
     {
         await using (var c = await TestClient.ConnectAsync(Port))

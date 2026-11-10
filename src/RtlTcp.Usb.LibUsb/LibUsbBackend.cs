@@ -155,6 +155,12 @@ public sealed unsafe class LibUsbBackend : IUsbBackend
             return new BulkStream(Handle, endpoint, bufferSize, bufferCount, sink);
         }
 
+        public void Reset()
+        {
+            var h = _handle;
+            if (h != IntPtr.Zero) libusb_reset_device(h); // NOT_FOUND = re-enumerated, handle is closed by Dispose anyway
+        }
+
         private IntPtr Handle => _handle != IntPtr.Zero ? _handle : throw new ObjectDisposedException(nameof(DeviceHandle));
 
         public void Dispose()

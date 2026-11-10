@@ -66,8 +66,15 @@ public sealed class DeviceManager : IAsyncDisposable
     private sealed record Retry : Signal;
     private sealed record IdleExpired(int Generation) : Signal;
     private sealed record Kick : Signal;
+    private sealed record CheckStall : Signal;
 
     public static readonly TimeSpan RetryInterval = TimeSpan.FromSeconds(1);
+
+    /// <summary>
+    /// A USB stick streaming to a client that delivers no data for this long is reset and reopened
+    /// (a hung stick otherwise stays in "streaming" forever until it is replugged).
+    /// </summary>
+    internal static TimeSpan StallTimeout { get; set; } = TimeSpan.FromSeconds(5);
 
     private readonly ISdrDeviceSource _source;
     private readonly Func<IReadOnlyCollection<string>> _claimedSerials;
@@ -81,6 +88,7 @@ public sealed class DeviceManager : IAsyncDisposable
     private ISdrDevice? _device;
     private IBulkStream? _stream;
     private int _streamGeneration;
+    private long _lastDataTicks;         // Environment.TickCount64 of the last bulk data (or stream start)
     private int _idleGeneration;
     private bool _retryScheduled;
     private DeviceSettings _settings;
@@ -96,6 +104,17 @@ public sealed class DeviceManager : IAsyncDisposable
         UpdateTuning();
         _loop = Task.Run(RunAsync);
         if (AlwaysOn) Post(new Retry()); // open right away
+        if (!_source.IsRemote) _ = WatchStallsAsync();
+    }
+
+    private async Task WatchStallsAsync()
+    {
+        using var timer = new PeriodicTimer(TimeSpan.FromSeconds(1));
+        try
+        {
+            while (await timer.WaitForNextTickAsync(_cts.Token)) Post(new CheckStall());
+        }
+        catch (OperationCanceledException) { }
     }
 
     /// <summary>Keep the stick open without clients (idle timeout 0). Never for remote sticks.</summary>
@@ -286,7 +305,25 @@ public sealed class DeviceManager : IAsyncDisposable
             case Kick when Owner is { } kicked:
                 kicked.OnKicked();
                 break;
+
+            case CheckStall when _stream is not null && Owner is not null
+                                 && Environment.TickCount64 - Volatile.Read(ref _lastDataTicks) > StallTimeout.TotalMilliseconds:
+                ResetStalledDevice();
+                break;
         }
+    }
+
+    /// <summary>Stick open and streaming but no data arrives: USB reset (software replug), then reopen.</summary>
+    private void ResetStalledDevice()
+    {
+        _log.LogWarning("{Device}: no data from stick for {Seconds:0} s, resetting USB device",
+            Config.Name, StallTimeout.TotalSeconds);
+        StopStream();
+        try { _device?.Reset(); }
+        catch (Exception ex) { _log.LogDebug("{Device}: USB reset failed: {Error}", Config.Name, ex.Message); }
+        CloseDevice(powerDown: false);
+        SetState(DeviceState.Lost, "USB device not delivering data, resetting");
+        ScheduleRetry();
     }
 
     // ---------------------------------------------------------------- device handling (loop only)
@@ -367,6 +404,7 @@ public sealed class DeviceManager : IAsyncDisposable
     {
         if (_device is null || _stream is not null) return;
         var gen = ++_streamGeneration;
+        Volatile.Write(ref _lastDataTicks, Environment.TickCount64);
         try
         {
             _stream = _device.StartStream(new Sink(this, gen));
@@ -415,6 +453,7 @@ public sealed class DeviceManager : IAsyncDisposable
         public void OnData(ReadOnlySpan<byte> data)
         {
             if (generation != Volatile.Read(ref manager._streamGeneration)) return;
+            Volatile.Write(ref manager._lastDataTicks, Environment.TickCount64);
             if (Volatile.Read(ref manager._owner) is not { } owner) return;
             owner.OnIq(data);
             Interlocked.Add(ref manager._bytes, data.Length);

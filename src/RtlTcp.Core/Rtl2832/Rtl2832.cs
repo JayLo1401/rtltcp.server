@@ -271,6 +271,9 @@ public sealed class Rtl2832 : IDisposable, Tuners.II2cBus
     public IBulkStream StartStream(IBulkSink sink, int bufferSize = 256 * 1024, int bufferCount = 15) =>
         _usb.StartBulkIn(BulkEndpoint, bufferSize, bufferCount, sink);
 
+    /// <summary>USB port reset, see <see cref="IUsbDeviceHandle.Reset"/>.</summary>
+    public void ResetUsb() => _usb.Reset();
+
     public void ResetBuffer()
     {
         WriteReg(Block.Usb, UsbEpaCtl, 0x1002, 2);

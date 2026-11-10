@@ -100,6 +100,7 @@ internal static unsafe partial class Native
     [LibraryImport(Lib)] public static partial int libusb_control_transfer(IntPtr handle, byte requestType, byte request,
         ushort value, ushort index, byte* data, ushort length, uint timeout);
     [LibraryImport(Lib)] public static partial int libusb_clear_halt(IntPtr handle, byte endpoint);
+    [LibraryImport(Lib)] public static partial int libusb_reset_device(IntPtr handle);
     [LibraryImport(Lib)] public static partial IntPtr libusb_alloc_transfer(int isoPackets);
     [LibraryImport(Lib)] public static partial void libusb_free_transfer(IntPtr transfer);
     [LibraryImport(Lib)] public static partial int libusb_submit_transfer(IntPtr transfer);

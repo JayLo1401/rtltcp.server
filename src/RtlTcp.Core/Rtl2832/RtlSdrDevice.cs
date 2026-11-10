@@ -167,5 +167,8 @@ public sealed class RtlSdrDevice : IDisposable
         catch (UsbException) { /* device may already be gone */ }
     }
 
+    /// <summary>USB port reset before closing a stick that stopped delivering data (software replug).</summary>
+    public void ResetUsb() => _demod.ResetUsb();
+
     public void Dispose() => _demod.Dispose();
 }
