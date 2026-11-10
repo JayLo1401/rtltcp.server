@@ -7,6 +7,8 @@ mit Datum. Steht dort nichts, werden die Commit-Titel seit dem letzten Release e
 
 ## [Unreleased]
 
+## [1.9.1] – 2026-11-10
+
 ### Geändert
 
 - Changelog für 1.2.0 bis 1.9.0 nachgetragen. Er wird ab jetzt bei jedem Release automatisch fortgeschrieben,
