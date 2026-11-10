@@ -7,6 +7,11 @@ mit Datum. Steht dort nichts, werden die Commit-Titel seit dem letzten Release e
 
 ## [Unreleased]
 
+## [1.11.1] – 2026-11-10
+
+### Behoben
+- Hängenden Stick erkennen und per USB-Reset neu öffnen
+
 ## [1.11.0] – 2026-11-10
 
 ### Neu
