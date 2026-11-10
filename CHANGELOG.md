@@ -2,7 +2,77 @@
 
 Alle nennenswerten Änderungen je Version. Format angelehnt an [Keep a Changelog](https://keepachangelog.com/de/1.1.0/), Versionsnummern nach [Semantic Versioning](https://semver.org/lang/de/).
 
+Neue Einträge kommen unter „[Unreleased]“. Beim Release macht der Workflow daraus automatisch die neue Version
+mit Datum. Steht dort nichts, werden die Commit-Titel seit dem letzten Release eingetragen.
+
 ## [Unreleased]
+
+### Geändert
+
+- Changelog für 1.2.0 bis 1.9.0 nachgetragen. Er wird ab jetzt bei jedem Release automatisch fortgeschrieben,
+  auch der im Home-Assistant-Add-on.
+
+## [1.9.0] – 2026-11-10
+
+### Neu
+
+- Standort und Antenne pro Stick (freier Text, in der Geräteansicht einstellbar). Beides steht im Status, wird
+  über rtl_tcp Jay extended an Clients geschickt (`server_info`, Liste der Sticks) und bei geteilten Sticks über
+  rtl.over.internet mitgeliefert. Entfernte Sticks zeigen die Angaben des Anbieters.
+
+## [1.8.0] – 2026-11-10
+
+### Neu
+
+- rtl_tcp Jay extended: `server_info` enthält Anzeigename, Port und Quelle des Sticks (`usb` oder `remote`, bei
+  entfernten Sticks auch Instanz und Standort).
+- Neuer Info-HELLO (`F2 "RTLI"`): Der Server schickt die Liste aller Sticks mit Status und trennt dann. So
+  sehen Clients alle Sticks eines Servers, ohne einen zu öffnen (#5).
+- Status zeigt pro Client, ob er `rtl_tcp` oder `rtl_tcp Jay extended` spricht.
+
+## [1.7.0] – 2026-11-09
+
+### Entfernt
+
+- Anmeldung für Stream-Clients (SCRAM) und die Seite „Stream-Benutzer“. Wer einen Stick nutzen darf, regelt das
+  Netz bzw. rtl.over.internet. Der Admin-Login der Weboberfläche bleibt.
+
+## [1.6.0] – 2026-11-09
+
+### Geändert
+
+- Instanz von rtl.over.internet hinzufügen nur noch mit Adresse, Instanz-Code und Passwort. Gespeichert wird nur
+  ein Geräte-Token.
+
+## [1.5.0] – 2026-11-09
+
+### Neu
+
+- Sticks über rtl.over.internet teilen: Anmeldung der Instanz, Steuerkanal, Freigaben pro Instanz, UDP-Hole-Punching.
+  Der Stream läuft verschlüsselt (QUIC) direkt zwischen den Servern, ohne VPN und ohne Portfreigabe.
+
+## [1.4.1] – 2026-11-09
+
+### Behoben
+
+- Windows: „QUIC nicht verfügbar“ im Release-Build. `msquic.dll` liegt jetzt neben der exe.
+
+## [1.4.0] – 2026-11-09
+
+### Neu
+
+- Teilen über das Internet in der Weboberfläche einstellen (Testbetrieb mit fester Adresse): eigene Kennung,
+  Gegenstellen, freigegebene Sticks, entfernte Sticks als Gerät anlegen.
+
+## [1.3.0] – 2026-11-09
+
+### Neu
+
+- Sticks direkt zwischen zwei Servern teilen (QUIC mit TLS 1.3, gegenseitige Prüfung per Fingerabdruck). Ein
+  entfernter Stick erscheint lokal wie ein eigener Port, öffnet sich erst mit einem Client und verbindet sich nach
+  Abbrüchen neu.
+
+## [1.2.0] – 2026-11-06
 
 ### Geändert
 

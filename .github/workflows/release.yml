@@ -273,14 +273,16 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          printf '%s\n' "$NOTES" > "$RUNNER_TEMP/changes.md"
           for TRY in 1 2 3; do
             git fetch origin main
             git checkout -B main origin/main
+            python3 .github/scripts/update_changelog.py "$VERSION" "$(date -u +%F)" "$RUNNER_TEMP/changes.md"
             sed -i "s/^version: .*/version: \"$VERSION\"/" homeassistant/rtltcp-server/config.yaml
             cp CHANGELOG.md homeassistant/rtltcp-server/CHANGELOG.md
-            git add homeassistant/rtltcp-server
+            git add CHANGELOG.md homeassistant/rtltcp-server
             git diff --cached --quiet && { echo "Add-on already at $VERSION"; exit 0; }
-            git commit -m "chore: Home-Assistant-Add-on $VERSION [skip ci]"
+            git commit -m "chore: Version $VERSION in CHANGELOG und Home-Assistant-Add-on [skip ci]"
             git push origin main && exit 0
             sleep 5
           done
