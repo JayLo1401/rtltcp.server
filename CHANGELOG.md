@@ -7,6 +7,8 @@ mit Datum. Steht dort nichts, werden die Commit-Titel seit dem letzten Release e
 
 ## [Unreleased]
 
+## [1.11.0] – 2026-11-10
+
 ### Neu
 
 - Entfernten Stick hinzufügen in zwei Schritten: Instanz wählen, dann einen der dort freigegebenen Sticks. Name,
