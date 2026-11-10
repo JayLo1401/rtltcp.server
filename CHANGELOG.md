@@ -7,6 +7,22 @@ mit Datum. Steht dort nichts, werden die Commit-Titel seit dem letzten Release e
 
 ## [Unreleased]
 
+### Neu
+
+- Entfernten Stick hinzufügen in zwei Schritten: Instanz wählen, dann einen der dort freigegebenen Sticks. Name,
+  Standort und Antenne werden vom teilenden Server übernommen.
+- Statusseite zeigt die echte Datenrate in Mbit/s: erwartet (Samplerate × 16 Bit), vom Stick bzw. aus dem Internet
+  empfangen, an den Client bzw. ins Internet gesendet, und verworfene Puffer, wenn die Leitung zu langsam ist.
+
+### Geändert
+
+- Das Feld „Adresse“ bei „Instanz hinzufügen“ ist leer: rtl.over.internet hostet jeder selbst.
+
+### Entfernt
+
+- Direkt teilen ohne rtl.over.internet (Testbetrieb mit fester Adresse, UDP-Port und Fingerprint). Solche Geräte
+  müssen über „+ Entfernter Stick“ neu angelegt werden.
+
 ## [1.10.0] – 2026-11-10
 
 ### Neu

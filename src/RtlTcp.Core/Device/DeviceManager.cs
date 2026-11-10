@@ -28,6 +28,15 @@ public interface IStreamOwner
     /// <summary>"rtl_tcp" (v1) or "rtl_tcp Jay extended" (v2), for the status page.</summary>
     string Protocol => "";
 
+    /// <summary>Bytes really written to the client's connection (IQ incl. framing), for the data rate display.</summary>
+    long BytesSent => 0;
+
+    /// <summary>IQ buffers thrown away because the connection was too slow.</summary>
+    long DroppedBuffers => 0;
+
+    /// <summary>The client is another rtltcp.server (stick shared over the internet).</summary>
+    bool IsRemoteSite => false;
+
     /// <summary>Called on the USB thread; must copy and return quickly.</summary>
     void OnIq(ReadOnlySpan<byte> data);
 

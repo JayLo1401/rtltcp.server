@@ -95,17 +95,12 @@ public sealed class DeviceConfig
 }
 
 /// <summary>
-/// Sharing sticks with other rtltcp.server installations over QUIC (Standort 1, provider side).
-/// For now peers are entered manually (test mode, needs a reachable UDP port); later rtl.over.internet
-/// supplies peers, addresses and fingerprints per session.
+/// Sharing sticks with other rtltcp.server installations over rtl.over.internet: it supplies peers,
+/// addresses and fingerprints per session (old config files may still contain the removed test-mode
+/// fields listenPort/bind/peers; they are ignored).
 /// </summary>
 public sealed class RemoteConfig
 {
-    /// <summary>UDP port the QUIC listener uses; 0 = do not accept remote clients.</summary>
-    public int ListenPort { get; set; }
-    public string Bind { get; set; } = "::";
-    public List<RemotePeerConfig> Peers { get; set; } = [];
-
     /// <summary>Name shown to other sites (rtl.over.internet); empty = computer name.</summary>
     public string ServerName { get; set; } = "";
 
@@ -118,7 +113,8 @@ public sealed class InstanceConfig
 {
     /// <summary>Local id (also key of the token).</summary>
     public string Id { get; set; } = "";
-    public string Url { get; set; } = "https://rtl.jaycloud.at";
+    /// <summary>Base URL of the (self-hosted) rtl.over.internet.</summary>
+    public string Url { get; set; } = "";
     public string Name { get; set; } = "";
     public int DeviceId { get; set; }
     public bool Enabled { get; set; } = true;
@@ -127,38 +123,16 @@ public sealed class InstanceConfig
     public List<string> Devices { get; set; } = [];
 }
 
-/// <summary>Another rtltcp.server allowed to use some of our sticks, identified by its certificate fingerprint.</summary>
-public sealed class RemotePeerConfig
-{
-    public string Name { get; set; } = "";
-
-    /// <summary>SHA-256 of the peer's certificate (hex, colons optional), shown in its web GUI.</summary>
-    public string Fingerprint { get; set; } = "";
-
-    /// <summary>Serials of the sticks this peer may use.</summary>
-    public List<string> Devices { get; set; } = [];
-}
-
 /// <summary>Where a remote stick lives (Standort 2, user side).</summary>
 public sealed class RemoteDeviceConfig
 {
     /// <summary>
-    /// Set: the stick is shared in this instance (<see cref="InstanceConfig.Id"/>) and <see cref="Share"/> is the
-    /// broker's share_id ("&lt;provider&gt;:&lt;serial&gt;"); host, port and fingerprint are not used.
-    /// Empty: test mode with a fixed address.
+    /// The instance (<see cref="InstanceConfig.Id"/>) the stick is shared in. Empty only in old configs from the
+    /// removed test mode (fixed address); such sticks are reported as not usable.
     /// </summary>
     public string Instance { get; set; } = "";
 
-    /// <summary>Host name or IP of the providing rtltcp.server.</summary>
-    public string Host { get; set; } = "";
-
-    /// <summary>Its QUIC (UDP) port, see <see cref="RemoteConfig.ListenPort"/>.</summary>
-    public int Port { get; set; }
-
-    /// <summary>SHA-256 of the provider's certificate; any other certificate is rejected.</summary>
-    public string Fingerprint { get; set; } = "";
-
-    /// <summary>Serial of the shared stick at the provider.</summary>
+    /// <summary>The broker's share_id ("&lt;provider&gt;:&lt;serial&gt;").</summary>
     public string Share { get; set; } = "";
 }
 

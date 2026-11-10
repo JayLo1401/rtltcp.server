@@ -5,7 +5,7 @@ const app = document.getElementById('app');
 const nav = document.getElementById('nav');
 let session = null;
 let pollTimer = null;
-const rateSamples = {}; // port -> { bytes, time }
+const rateSamples = {}; // port -> { stick, sent, client, since, time }
 
 const SAMPLE_RATES = [250000, 1024000, 1536000, 1800000, 1920000, 2048000, 2400000, 2560000, 2880000, 3200000];
 const GAINS = [0, 9, 14, 27, 37, 77, 87, 125, 144, 157, 166, 197, 207, 229, 254, 280, 297, 328, 338, 364, 372, 386,
@@ -72,6 +72,7 @@ async function guarded(button, action) {
 const nf = (digits) => new Intl.NumberFormat('de-AT', { minimumFractionDigits: digits, maximumFractionDigits: digits });
 const fmtMHz = (hz) => hz ? nf(3).format(hz / 1e6) + ' MHz' : '–';
 const fmtRate = (sps) => sps ? nf(3).format(sps / 1e6) + ' MS/s' : '–';
+const fmtMbit = (v) => v === null || v === undefined ? '…' : nf(1).format(v) + ' Mbit/s';
 const fmtGain = (g) => g === null || g === undefined ? 'automatisch' : nf(1).format(g / 10) + ' dB';
 
 function fmtSince(iso) {
@@ -213,9 +214,16 @@ async function renderStatus() {
 
     const now = performance.now();
     const cards = s.devices.map((d) => {
+      // real data rates from the byte counters between two polls (Mbit/s); null until two samples exist
       const prev = rateSamples[d.port];
-      rateSamples[d.port] = { bytes: d.bytesStreamed, time: now };
-      const rate = d.client && prev && d.bytesStreamed >= prev.bytes ? (d.bytesStreamed - prev.bytes) / 2 / ((now - prev.time) / 1000) : 0;
+      rateSamples[d.port] = { stick: d.bytesStreamed, sent: d.clientBytesSent, client: d.client, since: d.clientSince, time: now };
+      const secs = prev ? (now - prev.time) / 1000 : 0;
+      const same = prev && prev.client === d.client && prev.since === d.clientSince && secs > 0.5;
+      const mbit = (cur, old) => same && cur >= old ? (cur - old) * 8 / secs / 1e6 : null;
+      const inRate = mbit(d.bytesStreamed, prev && prev.stick);
+      const outRate = mbit(d.clientBytesSent, prev && prev.sent);
+      const expected = d.sampleRate ? d.sampleRate * 16 / 1e6 : null; // 8-bit I + 8-bit Q per sample
+      const rateEl = (v) => h('span', { class: v !== null && expected && v < expected * 0.9 ? 'rate-low' : null, text: fmtMbit(v) });
       const [cls, label] = d.client && d.state === 'ready' ? ['ok live', 'Streamt'] : (STATE[d.state] || ['', d.state]);
       return h('section', { class: 'card' },
         h('div', { class: 'card-head' },
@@ -228,8 +236,14 @@ async function renderStatus() {
           d.client ? [h('dt', { text: 'Frequenz' }), h('dd', { text: fmtMHz(d.frequency) })] : null,
           d.client ? [h('dt', { text: 'Samplerate' }), h('dd', { text: fmtRate(d.sampleRate) })] : null,
           d.client ? [h('dt', { text: 'Gain' }), h('dd', { text: fmtGain(d.gain) + (d.biasTee ? ' · Bias-Tee an' : '') })] : null,
-          d.client ? [h('dt', { text: 'Datenrate' }), h('dd', { text: prev ? fmtRate(rate) : '…' })] : null,
+          d.client ? [h('dt', { text: 'Datenrate erwartet' }), h('dd', { text: expected ? `${fmtMbit(expected)} (${fmtRate(d.sampleRate)} × 2 Byte)` : '–' })] : null,
+          d.client ? [h('dt', { text: d.isRemote ? 'Empfangen (Internet)' : 'Vom Stick' }), h('dd', {}, rateEl(inRate))] : null,
+          d.client ? [h('dt', { text: d.clientIsRemoteSite ? 'Gesendet (Internet)' : 'An den Client' }), h('dd', {}, rateEl(outRate))] : null,
+          d.client && d.clientDropped ? [h('dt', { text: 'Verworfen' }),
+            h('dd', { class: 'rate-low', text: `${d.clientDropped} Puffer – die Verbindung schafft die Datenrate nicht` })] : null,
           ['notready', 'lost', 'error'].includes(d.state) ? [h('dt', { text: 'Meldung' }), h('dd', { text: d.message })] : null),
+        d.client && (d.isRemote || d.clientIsRemoteSite) ? h('p', { class: 'muted small',
+          text: 'Weniger Datenrate übers Internet: im Client eine kleinere Samplerate wählen, z. B. 1,024 MS/s ≈ 16 Mbit/s.' }) : null,
         d.client ? h('div', { class: 'buttons' }, h('button', {
           class: 'btn small danger', text: 'Client trennen',
           onclick: (e) => guarded(e.target, async () => {
@@ -253,10 +267,7 @@ async function renderStatus() {
           h('a', { href: '#/devices', text: 'unter Geräte eintragen' }))) : null,
       s.devices.length ? h('div', { class: 'cards' }, cards)
         : h('div', { class: 'notice', text: 'Noch kein Gerät eingetragen.' }),
-      h('p', { class: 'muted' },
-        s.remote.fingerprint ? `Teilen über das Internet: Fingerprint dieses Servers ${s.remote.fingerprint}` : null,
-        s.remote.listen ? ` · Freigabe aktiv auf UDP ${s.remote.listen}` : null,
-        s.remote.error ? ` · ${s.remote.error}` : null));
+      s.remote.error ? h('p', { class: 'muted', text: `Teilen über das Internet: ${s.remote.error}` }) : null);
   };
   await refresh();
   pollTimer = setInterval(refresh, 2000);
@@ -287,48 +298,97 @@ async function renderDevices() {
     });
     draw();
   };
-  const addRemote = () => {
-    const first = instances.find((i) => i.state === 'connected') || instances[0];
-    devices.push({
-      serial: '', name: 'Entfernter Stick', enabled: true, bind: '0.0.0.0', port: nextPort(), idleTimeoutSeconds: 30, v1WaitForDeviceSeconds: 10,
-      defaults: { frequency: 100000000, sampleRate: 2048000, gain: null, ppm: 0, biasTee: false },
-      remote: { instance: first ? first.id : '', host: '', port: 4433, fingerprint: '', share: '' },
-    });
-    draw();
+  const SHARE_STATE = { ready: 'bereit', busy: 'belegt', idle: 'ruht', device_not_ready: 'nicht bereit', device_lost: 'getrennt' };
+  const instLabel = (i) => i.state === 'connected' ? 'verbunden' : INST_LABEL[i.state] || i.state;
+  const shareText = (s) => [s.location, s.antenna, s.tuner, s.online ? SHARE_STATE[s.state] || s.state : 'offline'].filter(Boolean).join(' · ');
+  const fromShare = (d, s) => { // name, location and antenna as the providing server announces them
+    d.name = `${s.name} @ ${s.provider}`;
+    d.location = s.location || '';
+    d.antenna = s.antenna || '';
   };
 
-  // remote stick: from an instance on rtl.over.internet, or direct (test mode, fixed address)
+  // "+ Entfernter Stick": 1. instance, 2. one of the sticks shared there
+  let picker = null; // { instance, share }
+  const addRemote = () => {
+    const first = instances.find((i) => i.state === 'connected') || instances[0];
+    picker = { instance: first ? first.id : '', share: '' };
+    draw();
+    list.scrollIntoView({ behavior: 'smooth' });
+  };
+  const pickerCard = () => {
+    const p = picker;
+    const cancel = h('button', { class: 'btn', type: 'button', text: 'Abbrechen', onclick: () => { picker = null; draw(); } });
+    const head = h('div', { class: 'card-head' }, h('h3', { text: 'Entfernten Stick hinzufügen' }));
+    if (!instances.length) {
+      return h('section', { class: 'card' }, head,
+        h('div', { class: 'notice' }, h('p', {}, 'Noch keine Instanz von rtl.over.internet eingetragen – ',
+          h('a', { href: '#/settings', text: 'unter Einstellungen hinzufügen' }), '.')),
+        h('div', { class: 'buttons' }, cancel));
+    }
+    const inst = h('select', { onchange: (e) => { p.instance = e.target.value; p.share = ''; draw(); } },
+      instances.map((i) => h('option', { value: i.id, text: `${i.name || i.url} (${instLabel(i)})` })));
+    inst.value = p.instance;
+    const i = instances.find((x) => x.id === p.instance);
+    const taken = new Set(devices.filter((d) => d.remote).map((d) => d.remote.share));
+    const shares = (i ? i.shares : []).filter((s) => !s.own);
+    const ok = h('button', { class: 'btn primary', type: 'button', text: 'Stick übernehmen', disabled: !p.share, onclick: () => {
+      const s = shares.find((x) => x.shareId === p.share);
+      if (!s) return;
+      const d = {
+        serial: '', enabled: true, bind: '0.0.0.0', port: nextPort(), idleTimeoutSeconds: 30, v1WaitForDeviceSeconds: 10,
+        defaults: { frequency: 100000000, sampleRate: 2048000, gain: null, ppm: 0, biasTee: false },
+        remote: { instance: p.instance, share: s.shareId },
+      };
+      fromShare(d, s);
+      devices.push(d);
+      picker = null;
+      draw();
+      toast('Übernommen – zum Aktivieren unten speichern');
+    } });
+    let body;
+    if (!i || i.state !== 'connected') {
+      body = h('div', { class: 'notice', text: `Instanz ${instLabel(i || {})}: die freigegebenen Sticks sind erst sichtbar, wenn sie verbunden ist.` });
+    } else if (!shares.length) {
+      body = h('div', { class: 'notice', text: 'In dieser Instanz teilt noch kein anderer Server einen Stick.' });
+    } else {
+      body = h('div', { class: 'share-list' }, shares.map((s) => h('label', { class: 'share-item' + (s.online ? '' : ' off') },
+        h('input', { type: 'radio', name: 'pick-share', value: s.shareId, checked: p.share === s.shareId, disabled: taken.has(s.shareId),
+          onchange: () => { p.share = s.shareId; ok.disabled = false; } }),
+        h('span', {}, h('strong', { text: s.name }), ` @ ${s.provider}`,
+          h('small', { text: shareText(s) + (taken.has(s.shareId) ? ' · schon eingetragen' : '') })))));
+    }
+    return h('section', { class: 'card' }, head,
+      h('div', { class: 'form-grid' }, field('1. Instanz', inst, 'von rtl.over.internet')),
+      h('h3', { class: 'section-title', text: '2. Stick auswählen' }), body,
+      h('div', { class: 'buttons' }, ok, cancel));
+  };
+
+  // an existing remote stick: instance and stick can be changed
   const remoteEditor = (d) => {
+    const r = d.remote;
+    if (!r.instance) {
+      return h('div', { class: 'notice err', text: 'Dieser Stick nutzt die Direktverbindung (Testbetrieb), die es nicht mehr gibt. Bitte das Gerät entfernen und über „+ Entfernter Stick“ neu anlegen.' });
+    }
     const box = h('div');
     const render = () => {
-      const r = d.remote;
       const mode = h('select', { onchange: (e) => { r.instance = e.target.value; r.share = ''; render(); } },
-        instances.map((i) => h('option', { value: i.id, text: `Instanz ${i.name || i.url}` })),
-        h('option', { value: '', text: 'Direkt (Testbetrieb, feste Adresse)' }));
-      mode.value = r.instance || '';
-      let body;
-      if (r.instance) {
-        const i = instances.find((x) => x.id === r.instance);
-        const shares = (i ? i.shares : []).filter((s) => !s.own);
-        const pick = h('select', { onchange: (e) => {
-          r.share = e.target.value;
-          const s = shares.find((x) => x.shareId === r.share);
-          if (s && (!d.name || d.name === 'Entfernter Stick')) { d.name = `${s.name} @ ${s.provider}`; draw(); }
-        } },
-        h('option', { value: '', text: shares.length ? 'Stick auswählen …' : 'In dieser Instanz ist nichts freigegeben' }),
-        shares.map((s) => h('option', { value: s.shareId, text: `${s.name} @ ${s.provider}${s.online ? '' : ' (offline)'}` })));
-        if (r.share && !shares.some((s) => s.shareId === r.share)) pick.append(h('option', { value: r.share, text: `${r.share} (derzeit nicht freigegeben)` }));
-        pick.value = r.share;
-        body = h('div', { class: 'form-grid' }, field('Quelle', mode), field('Freigegebener Stick', pick, i && i.state !== 'connected' ? `Instanz ${INST_LABEL[i.state] || i.state}` : 'Liste kommt von rtl.over.internet'));
-      } else {
-        body = h('div', { class: 'form-grid' },
-          field('Quelle', mode),
-          field('Server', h('input', { type: 'text', value: r.host, oninput: (e) => { r.host = e.target.value.trim(); } }), 'IP oder Name des teilenden rtltcp.server'),
-          field('UDP-Port', num(r.port, (v) => { r.port = v; }, { min: 1, max: 65535 }), 'dort unter Einstellungen'),
-          field('Fingerprint', h('input', { type: 'text', value: r.fingerprint, spellcheck: 'false', oninput: (e) => { r.fingerprint = e.target.value.trim(); } }), 'steht unten auf dessen Statusseite'),
-          field('Seriennummer dort', h('input', { type: 'text', value: r.share, oninput: (e) => { r.share = e.target.value.trim(); } })));
-      }
-      fill(box, h('h3', { text: 'Entfernter Stick', class: 'section-title' }), body);
+        instances.map((i) => h('option', { value: i.id, text: `${i.name || i.url} (${instLabel(i)})` })));
+      if (!instances.some((i) => i.id === r.instance)) mode.append(h('option', { value: r.instance, text: 'Instanz entfernt' }));
+      mode.value = r.instance;
+      const i = instances.find((x) => x.id === r.instance);
+      const shares = (i ? i.shares : []).filter((s) => !s.own);
+      const pick = h('select', { onchange: (e) => {
+        r.share = e.target.value;
+        const s = shares.find((x) => x.shareId === r.share);
+        if (s) { fromShare(d, s); draw(); }
+      } },
+      h('option', { value: '', text: shares.length ? 'Stick auswählen …' : 'In dieser Instanz ist nichts freigegeben' }),
+      shares.map((s) => h('option', { value: s.shareId, text: `${s.name} @ ${s.provider}${s.online ? '' : ' (offline)'}` })));
+      if (r.share && !shares.some((s) => s.shareId === r.share)) pick.append(h('option', { value: r.share, text: `${r.share} (derzeit nicht freigegeben)` }));
+      pick.value = r.share;
+      fill(box, h('h3', { text: 'Entfernter Stick', class: 'section-title' }),
+        h('div', { class: 'form-grid' }, field('Instanz', mode),
+          field('Freigegebener Stick', pick, i && i.state !== 'connected' ? `Instanz ${instLabel(i)}` : 'Liste kommt von rtl.over.internet')));
     };
     render();
     return box;
@@ -359,9 +419,9 @@ async function renderDevices() {
       h('div', { class: 'form-grid' },
         field('Name', h('input', { type: 'text', value: d.name, maxlength: 64, oninput: (e) => { d.name = e.target.value; } })),
         field('Standort', h('input', { type: 'text', value: d.location || '', maxlength: 100, placeholder: 'z. B. Wien Dach', oninput: (e) => { d.location = e.target.value; } }),
-          d.remote ? 'nur falls der teilende Server nichts angibt' : 'sehen die Clients, z. B. home.radio'),
+          d.remote ? 'vom teilenden Server übernommen; seine Angabe hat Vorrang' : 'sehen die Clients, z. B. home.radio'),
         field('Antenne', h('input', { type: 'text', value: d.antenna || '', maxlength: 100, placeholder: 'z. B. DAB-Rundstrahler, Discone', oninput: (e) => { d.antenna = e.target.value; } }),
-          d.remote ? 'nur falls der teilende Server nichts angibt' : 'Antennentyp, frei wählbar'),
+          d.remote ? 'vom teilenden Server übernommen; seine Angabe hat Vorrang' : 'Antennentyp, frei wählbar'),
         d.remote ? null : field('Stick', serial, 'über die Seriennummer zugeordnet'),
         field('Port', num(d.port, (v) => { d.port = v; }, { min: 1, max: 65535 })),
         field('Adresse', h('input', { type: 'text', value: d.bind, oninput: (e) => { d.bind = e.target.value.trim(); } }), '0.0.0.0 = alle Netzwerkkarten'),
@@ -394,7 +454,7 @@ async function renderDevices() {
   });
 
   function draw() {
-    list.replaceChildren(...devices.map(deviceCard));
+    list.replaceChildren(...(picker ? [pickerCard()] : []), ...devices.map(deviceCard));
   }
   draw();
 
@@ -551,10 +611,10 @@ function updateCard(u) {
 // ------------------------------------------------------------------ settings
 
 async function renderSettings() {
-  let logging, update, remote, status, devices, inst;
+  let logging, update, remote, devices, inst;
   try {
-    [logging, update, remote, status, devices, inst] = await Promise.all([api('GET', '/settings/logging'),
-      api('GET', '/update'), api('GET', '/settings/remote'), api('GET', '/status'), api('GET', '/devices'), api('GET', '/remote/instances')]);
+    [logging, update, remote, devices, inst] = await Promise.all([api('GET', '/settings/logging'),
+      api('GET', '/update'), api('GET', '/settings/remote'), api('GET', '/devices'), api('GET', '/remote/instances')]);
   } catch (e) { if (e.status !== 401) setPage(h('div', { class: 'notice err', text: e.message })); return; }
 
   // ---- instances on rtl.over.internet
@@ -588,7 +648,7 @@ async function renderSettings() {
           guarded(e.target, async () => { await api('DELETE', `/remote/instances/${i.id}`); toast('Entfernt'); renderSettings(); });
         } })));
   };
-  const enUrl = h('input', { type: 'url', value: 'https://rtl.jaycloud.at', required: true });
+  const enUrl = h('input', { type: 'url', placeholder: 'https://mediator.example.com', required: true });
   const enCode = h('input', { type: 'text', placeholder: 'K7QM-4XPD', required: true, autocomplete: 'off' });
   const enPw = h('input', { type: 'password', required: true, autocomplete: 'new-password' });
   const enBtn = h('button', { class: 'btn primary', type: 'submit', text: 'Instanz hinzufügen' });
@@ -620,7 +680,7 @@ async function renderSettings() {
     onsubmit: (e) => {
       e.preventDefault();
       guarded(enBtn, async () => {
-        await api('PUT', '/settings/remote', { ...remote, serverName: srvName.value.trim() });
+        await api('PUT', '/settings/remote', { serverName: srvName.value.trim() });
         await api('POST', '/remote/instances', { url: enUrl.value.trim(), code: enCode.value, password: enPw.value });
         toast('Instanz hinzugefügt');
         renderSettings();
@@ -636,47 +696,9 @@ async function renderSettings() {
     field('Zugangsdatei', credFile, 'optional: rtl-over-internet-….json von der Instanzseite, füllt die Felder darunter aus')),
   credInfo,
   h('div', { class: 'form-grid' },
-    field('Adresse', enUrl), field('Instanz-Code', enCode), field('Passwort', enPw, 'der Instanz'),
+    field('Adresse', enUrl, 'deines rtl.over.internet (selbst gehostet)'), field('Instanz-Code', enCode), field('Passwort', enPw, 'der Instanz'),
     field('Name dieses Servers', srvName, 'sehen die anderen Standorte, leer = Computername')),
   h('div', { class: 'buttons' }, enBtn));
-
-  // ---- sharing over the internet (test mode: peers entered by hand)
-  const peerList = h('div');
-  const peerCard = (p, i) => h('div', { class: 'peer' },
-    h('div', { class: 'form-grid' },
-      field('Name der Gegenstelle', h('input', { type: 'text', value: p.name, maxlength: 64, oninput: (e) => { p.name = e.target.value; } })),
-      field('Fingerprint der Gegenstelle', h('input', { type: 'text', value: p.fingerprint, spellcheck: 'false', oninput: (e) => { p.fingerprint = e.target.value.trim(); } }),
-        'steht unten auf deren Statusseite')),
-    h('div', { class: 'buttons' },
-      usbSticks.length ? usbSticks.map((d) => switchEl(p.devices.includes(d.serial), (v) => {
-        p.devices = v ? [...new Set([...p.devices, d.serial])] : p.devices.filter((s) => s !== d.serial);
-      }, `${d.name} (${d.serial})`)) : h('span', { class: 'muted', text: 'Keine Sticks mit Seriennummer eingetragen.' }),
-      h('button', { class: 'btn small danger', type: 'button', text: 'Entfernen', onclick: () => { remote.peers.splice(i, 1); drawPeers(); } })));
-  const drawPeers = () => fill(peerList, remote.peers.map(peerCard));
-  drawPeers();
-  const udpPort = h('input', { type: 'number', min: 0, max: 65535, value: remote.listenPort });
-  const saveRemote = h('button', { class: 'btn primary', type: 'submit', text: 'Speichern' });
-  const remoteForm = h('form', {
-    class: 'card',
-    onsubmit: (e) => {
-      e.preventDefault();
-      guarded(saveRemote, async () => {
-        await api('PUT', '/settings/remote', { listenPort: Number(udpPort.value), bind: remote.bind, peers: remote.peers, serverName: remote.serverName });
-        toast('Gespeichert – Stream-Server neu gestartet');
-        renderSettings();
-      });
-    },
-  },
-  h('div', { class: 'card-head' }, h('h3', { text: 'Direkt teilen ohne rtl.over.internet (Testbetrieb)' })),
-  h('p', { class: 'muted' }, 'Fingerprint dieses Servers: ',
-    h('code', { text: status.remote.fingerprint || '–' }),
-    status.remote.listen ? ` · aktiv auf UDP ${status.remote.listen}` : null,
-    status.remote.error ? h('strong', { text: ` · ${status.remote.error}` }) : null),
-  h('p', { class: 'muted', text: 'Bis rtl.over.internet fertig ist, werden Gegenstellen hier von Hand eingetragen. Der UDP-Port muss für die Gegenstelle erreichbar sein (LAN oder IPv6).' }),
-  h('div', { class: 'form-grid' }, field('UDP-Port für Gegenstellen', udpPort, '0 = keine Freigabe, z. B. 4433')),
-  peerList,
-  h('div', { class: 'buttons' }, saveRemote,
-    h('button', { class: 'btn', type: 'button', text: '+ Gegenstelle', onclick: () => { remote.peers.push({ name: '', fingerprint: '', devices: [] }); drawPeers(); } })));
 
   const days = h('input', { type: 'number', min: 1, max: 365, value: logging.retentionDays, required: true });
   const saveLog = h('button', { class: 'btn primary', type: 'submit', text: 'Speichern' });
@@ -718,7 +740,7 @@ async function renderSettings() {
     field('Aktuelles Passwort', cur), field('Neues Passwort', pw, 'mindestens 8 Zeichen'), field('Wiederholen', pw2)),
   h('div', { class: 'buttons' }, savePw));
 
-  setPage(h('div', { class: 'page-head' }, h('h1', { text: 'Einstellungen' })), updateCard(update), instForm, remoteForm, logForm,
+  setPage(h('div', { class: 'page-head' }, h('h1', { text: 'Einstellungen' })), updateCard(update), instForm, logForm,
     session.ingress ? null : pwForm);
 }
 

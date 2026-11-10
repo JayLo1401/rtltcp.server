@@ -151,6 +151,15 @@ dl.facts dd .badge { margin-left: 8px; }
 .buttons { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 16px; }
 .page-head .buttons { margin-top: 0; }
 .peer { border-top: 1px solid var(--border); padding-top: 12px; margin-top: 12px; }
+.rate-low { color: var(--red); font-weight: 600; }
+p.small { font-size: .85rem; margin: 8px 0 0; }
+.share-list { display: grid; gap: 8px; margin: 8px 0; }
+.share-item { display: flex; gap: 10px; align-items: flex-start; padding: 10px 12px; border: 1px solid var(--border);
+  border-radius: 10px; cursor: pointer; }
+.share-item:hover { border-color: var(--accent); }
+.share-item.off { opacity: .6; }
+.share-item input { margin-top: 3px; }
+.share-item small { display: block; color: var(--muted); }
 code { overflow-wrap: anywhere; }
 
 /* Formulare */

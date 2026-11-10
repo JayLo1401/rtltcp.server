@@ -58,7 +58,7 @@ public sealed class BrokerTests
     [Theory]
     [InlineData("[2a02:8388::1]:51234", true)]
     [InlineData("192.168.1.5:51234", true)]
-    [InlineData("rtl.jaycloud.at:3478", false)]
+    [InlineData("mediator.example.com:3478", false)]
     [InlineData("2a02:8388::1:51234", false)]
     public void Candidates_are_ip_literals_only(string text, bool valid) =>
         Assert.Equal(valid, SessionSocket.Parse(text) is not null);

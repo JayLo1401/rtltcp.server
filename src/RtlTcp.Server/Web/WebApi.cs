@@ -23,18 +23,23 @@ public static class WebApi
         int Port, string Name, string Serial, bool Enabled, string State, string Message,
         string? Client, DateTimeOffset? ClientSince, long BytesStreamed,
         string? Tuner, ulong? Frequency, uint? SampleRate, int? Gain, bool BiasTee, string? Error,
-        string? ClientProtocol = null, string? Origin = null, string? Location = null, string? Antenna = null);
+        string? ClientProtocol = null, string? Origin = null, string? Location = null, string? Antenna = null,
+        bool IsRemote = false, long ClientBytesSent = 0, long ClientDropped = 0, bool ClientIsRemoteSite = false);
 
+    /// <param name="BytesStreamed">IQ bytes from the stick (remote stick: received over the internet).</param>
+    /// <param name="ClientBytesSent">Bytes written to the current client's connection (for the real data rate).</param>
     public sealed record StatusDto(string Version, List<DeviceStatusDto> Devices, List<StickDto> Sticks,
         string? UpdateVersion, bool UpdateCanInstall, RemoteStatusDto Remote);
 
-    /// <summary>Sharing between sites: own fingerprint (for the other side), listener, or why it is unavailable.</summary>
-    public sealed record RemoteStatusDto(string? Fingerprint, string? Listen, string? Error);
+    /// <summary>Sharing between sites: why it is unavailable (null = available).</summary>
+    public sealed record RemoteStatusDto(string? Error);
+
+    public sealed record RemoteSettingsDto(string ServerName);
 
     public sealed record EnrollDto(string Url, string Code, string Password);
     public sealed record InstanceUpdateDto(bool Enabled, List<string> Devices);
     public sealed record InstanceShareDto(string ShareId, string Provider, string StickId, string Name, string Tuner, string State,
-        bool Online, bool Own);
+        bool Online, bool Own, string? Location = null, string? Antenna = null);
     public sealed record InstanceDto(string Id, string Url, string Name, bool Enabled, List<string> Devices, string State,
         string? Message, int DeviceId, List<InstanceShareDto> Shares);
     public sealed record RemoteInstancesDto(string ServerName, string? Fingerprint, string? Unavailable, List<InstanceDto> Instances);
@@ -165,7 +170,8 @@ public static class WebApi
                     m?.Owner?.RemoteAddress, m?.OwnerSince, m?.BytesStreamed ?? 0, m?.Tuner?.Name,
                     m?.Tuning.Frequency, m?.Tuning.SampleRate, m?.Tuning.Gain, m?.Tuning.BiasTee ?? false, error,
                     m?.Owner?.Protocol, d.Remote is null ? null : OriginText(m?.Origin()),
-                    m?.Details.Location ?? NullIfEmpty(d.Location), m?.Details.Antenna ?? NullIfEmpty(d.Antenna));
+                    m?.Details.Location ?? NullIfEmpty(d.Location), m?.Details.Antenna ?? NullIfEmpty(d.Antenna),
+                    d.Remote is not null, m?.Owner?.BytesSent ?? 0, m?.Owner?.DroppedBuffers ?? 0, m?.Owner?.IsRemoteSite ?? false);
             }).ToList();
             var configured = cfg.Current.Devices.Select(d => d.Serial).ToHashSet();
             // A stick that is open (by us) cannot be opened again to read its serial (Windows) → add our open sticks.
@@ -178,7 +184,7 @@ public static class WebApi
             var r = host.Remote;
             return new StatusDto(StreamHostService.Version, devices, sticks,
                 update.UpdateAvailable ? update.Latest!.Version : null, update.CanInstall,
-                new RemoteStatusDto(r.Fingerprint, r.ListenEndPoint?.ToString(), r.Unavailable ?? r.ListenError));
+                new RemoteStatusDto(r.Unavailable));
         });
 
         admin.MapPost("/devices/{port:int}/kick", (HttpContext ctx, int port, StreamHostService host) =>
@@ -201,34 +207,16 @@ public static class WebApi
             return Results.Ok();
         });
 
-        admin.MapGet("/settings/remote", (ServerConfigHolder cfg) => cfg.Current.Remote);
+        admin.MapGet("/settings/remote", (ServerConfigHolder cfg) => new RemoteSettingsDto(cfg.Current.Remote.ServerName));
 
-        admin.MapPut("/settings/remote", async (HttpContext ctx, RemoteConfig dto, ServerConfigHolder cfg, StreamHostService host) =>
+        // Only the server name: used for new enrollments and when the control channels start next time.
+        admin.MapPut("/settings/remote", (HttpContext ctx, RemoteSettingsDto dto, ServerConfigHolder cfg) =>
         {
-            if (dto.ListenPort is < 0 or > 65535) return Problem($"Ungültiger UDP-Port {dto.ListenPort}");
-            if (!IPAddress.TryParse(dto.Bind, out _)) return Problem($"Ungültige Adresse {dto.Bind}");
-            var peers = new List<RemotePeerConfig>();
-            foreach (var p in dto.Peers)
-            {
-                var name = p.Name.Trim();
-                if (name.Length == 0) return Problem("Jede Gegenstelle braucht einen Namen");
-                if (RtlTcp.Core.Remote.RemoteProtocol.NormalizeFingerprint(p.Fingerprint).Length != 64)
-                    return Problem($"{name}: Fingerprint ungültig (SHA-256, 64 Hex-Zeichen)");
-                peers.Add(new RemotePeerConfig
-                {
-                    Name = name, Fingerprint = p.Fingerprint.Trim(),
-                    Devices = [.. p.Devices.Select(d => d.Trim()).Where(d => d.Length > 0).Distinct()],
-                });
-            }
-            cfg.Update(c =>
-            {
-                c.Remote.ListenPort = dto.ListenPort;
-                c.Remote.Bind = dto.Bind;
-                c.Remote.Peers = peers;
-                c.Remote.ServerName = dto.ServerName.Trim();
-            });
-            log.LogInformation("{Admin} saved remote sharing: udp port {Port}, {Count} peer(s)", Who(ctx), dto.ListenPort, peers.Count);
-            await host.ReloadAsync();
+            var name = (dto.ServerName ?? "").Trim();
+            if (name.Length > 64) return Problem("Name höchstens 64 Zeichen");
+            if (name == cfg.Current.Remote.ServerName) return Results.Ok();
+            cfg.Update(c => c.Remote.ServerName = name);
+            log.LogInformation("{Admin} set the server name for rtl.over.internet to {Name}", Who(ctx), name);
             return Results.Ok();
         });
 
@@ -243,7 +231,7 @@ public static class WebApi
                         !i.Enabled ? "disabled" : b is null ? "stopped" : b.State.ToString().ToLowerInvariant(),
                         b?.Message, b?.DeviceId ?? i.DeviceId,
                         b?.Shares.Select(s => new InstanceShareDto(s.ShareId, s.ProviderName, s.StickId, s.Name, s.Tuner, s.State,
-                            s.Online, s.ProviderId == (b.DeviceId ?? i.DeviceId))).ToList() ?? []);
+                            s.Online, s.ProviderId == (b.DeviceId ?? i.DeviceId), s.Location, s.Antenna)).ToList() ?? []);
                 }).ToList()));
 
         admin.MapPost("/remote/instances", async (HttpContext ctx, EnrollDto dto, ServerConfigHolder cfg, StreamHostService host) =>
@@ -418,16 +406,9 @@ public static class WebApi
         foreach (var d in devices)
         {
             if (d.Remote is not { } r) continue;
-            if (r.Instance.Length > 0)
-            {
-                if (!r.Share.Contains(':')) return $"{d.Name}: bitte einen freigegebenen Stick der Instanz auswählen";
-                continue;
-            }
-            if (string.IsNullOrWhiteSpace(r.Host)) return $"{d.Name}: Adresse des entfernten Servers fehlt";
-            if (r.Port is < 1 or > 65535) return $"{d.Name}: ungültiger Port {r.Port} des entfernten Servers";
-            if (RtlTcp.Core.Remote.RemoteProtocol.NormalizeFingerprint(r.Fingerprint).Length != 64)
-                return $"{d.Name}: Fingerprint des entfernten Servers ungültig (SHA-256, 64 Hex-Zeichen)";
-            if (string.IsNullOrWhiteSpace(r.Share)) return $"{d.Name}: Seriennummer des entfernten Sticks fehlt";
+            if (r.Instance.Length == 0)
+                return $"{d.Name}: Direktverbindung (Testbetrieb) gibt es nicht mehr – Gerät entfernen und über „+ Entfernter Stick“ aus einer Instanz neu anlegen";
+            if (!r.Share.Contains(':')) return $"{d.Name}: bitte einen freigegebenen Stick der Instanz auswählen";
         }
         var usb = devices.Where(d => d.Remote is null).ToList();
         var dupSerial = usb.Where(d => d.Serial.Length > 0).GroupBy(d => d.Serial).FirstOrDefault(g => g.Count() > 1);

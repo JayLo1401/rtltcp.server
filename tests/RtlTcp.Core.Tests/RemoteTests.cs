@@ -23,8 +23,11 @@ public sealed class RemoteTests : IAsyncLifetime
     private static readonly PeerIdentity Site2 = PeerIdentity.CreateEphemeral("site2");
 
     private readonly FakeSource _stick = new();
-    private readonly List<RemotePeerConfig> _peers =
-        [new RemotePeerConfig { Name = "Standort 2", Fingerprint = Site2.Fingerprint, Devices = [Share] }];
+
+    /// <summary>What rtl.over.internet would allow: site 2 may use <see cref="Share"/>.</summary>
+    private static ShareHost.PeerGrant? Authorize(System.Security.Cryptography.X509Certificates.X509Certificate cert) =>
+        RemoteProtocol.FingerprintMatches(cert, Site2.Fingerprint)
+            ? new ShareHost.PeerGrant("Standort 2", s => s == Share) : null;
 
     private DeviceManager _provider = null!;
     private ShareHost _host = null!;
@@ -43,22 +46,21 @@ public sealed class RemoteTests : IAsyncLifetime
             Serial = Share, Name = "Standort1 Stick 1", Location = "Wien Dach", Antenna = "Discone",
             Bind = "127.0.0.1", Port = 0, IdleTimeoutSeconds = 1,
         }, _stick, NullLogger.Instance);
-        _host = new ShareHost(new IPEndPoint(IPAddress.Loopback, 0), Site1, () => _peers,
+        _host = new ShareHost(new IPEndPoint(IPAddress.Loopback, 0), Site1, Authorize,
             s => s == Share ? _provider : null, "test", NullLogger.Instance);
         await _host.StartAsync();
     }
 
     private int StartConsumer(string? fingerprint = null, string share = Share, PeerIdentity? identity = null)
     {
-        var remote = new RemoteDeviceConfig
-        {
-            Host = "127.0.0.1", Port = _host.LocalEndPoint!.Port, Fingerprint = fingerprint ?? Site1.Fingerprint, Share = share,
-        };
+        var connector = new DirectConnector(new IPEndPoint(IPAddress.Loopback, _host.LocalEndPoint!.Port),
+            fingerprint ?? Site1.Fingerprint, share, identity ?? Site2);
         _consumer = new DeviceManager(new DeviceConfig
         {
-            Name = "Remote", Bind = "127.0.0.1", Port = 0, IdleTimeoutSeconds = 0, V1WaitForDeviceSeconds = 5, Remote = remote,
+            Name = "Remote", Bind = "127.0.0.1", Port = 0, IdleTimeoutSeconds = 0, V1WaitForDeviceSeconds = 5,
+            Remote = new RemoteDeviceConfig { Instance = "test", Share = share },
             Defaults = new DeviceDefaults { Frequency = 92_600_000, SampleRate = 2_400_000, Gain = 144 },
-        }, new RemoteDeviceSource(remote, identity ?? Site2, NullLogger.Instance), NullLogger.Instance);
+        }, new RemoteDeviceSource(connector, NullLogger.Instance), NullLogger.Instance);
         _consumerServer = new StreamServer(_consumer, "test", NullLogger.Instance);
         _consumerServer.Start();
         return _consumerServer.LocalEndPoint!.Port;
@@ -114,6 +116,11 @@ public sealed class RemoteTests : IAsyncLifetime
         await Eventually(() => stick.Executed.Contains(new Command(RtlCommand.SetFrequency, 100_000_000)));
 
         Assert.StartsWith("Standort 2 (127.0.0.1)", _provider.Owner!.RemoteAddress);
+
+        // data rate display: the provider counts what it sent to the remote site, site 2 what it sent to its client
+        Assert.True(_provider.Owner.IsRemoteSite);
+        await Eventually(() => _provider.Owner!.BytesSent > 0 && _consumer.Owner!.BytesSent > 0 && _consumer.BytesStreamed > 0);
+        Assert.False(_consumer.Owner!.IsRemoteSite);
     }
 
     [Fact]

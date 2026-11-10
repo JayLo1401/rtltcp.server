@@ -38,15 +38,6 @@ public sealed class ShareHost : IAsyncDisposable
     /// <summary>A peer allowed by its certificate: display name and which sticks (serials) it may use.</summary>
     public sealed record PeerGrant(string Name, Func<string, bool> MayUse);
 
-    /// <summary>Manually configured peers (test mode), read per connection so changes apply immediately.</summary>
-    public ShareHost(IPEndPoint endPoint, PeerIdentity identity, Func<IReadOnlyList<RemotePeerConfig>> peers,
-        Func<string, DeviceManager?> findDevice, string version, ILogger log)
-        : this(endPoint, identity, cert => peers().FirstOrDefault(p => RemoteProtocol.FingerprintMatches(cert, p.Fingerprint)) is { } p
-            ? new PeerGrant(p.Name, s => p.Devices.Contains(s, StringComparer.OrdinalIgnoreCase)) : null,
-            findDevice, version, log)
-    {
-    }
-
     /// <param name="authorize">Decides per peer certificate; null = refused in the TLS handshake.</param>
     /// <param name="findDevice">Running stick by serial (share id).</param>
     public ShareHost(IPEndPoint endPoint, PeerIdentity identity, Func<X509Certificate, PeerGrant?> authorize,
@@ -178,7 +169,7 @@ public sealed class ShareHost : IAsyncDisposable
                 return;
             }
 
-            var conn = new ClientConnection(stream, ip, who, stream.CompleteWrites, waitForHello: false);
+            var conn = new ClientConnection(stream, ip, who, stream.CompleteWrites, waitForHello: false, remoteSite: true);
             await new ClientSession(conn, manager, _version, _log, ct).RunAsync();
         }
         catch (Exception ex) when (ex is QuicException or IOException or OperationCanceledException

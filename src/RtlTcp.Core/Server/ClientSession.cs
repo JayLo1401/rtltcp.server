@@ -10,8 +10,11 @@ namespace RtlTcp.Core.Server;
 
 /// <summary>Transport of one client: a TCP socket or a QUIC stream from a remote site.</summary>
 internal sealed class ClientConnection(Stream stream, IPAddress remoteIp, string remoteAddress, Action shutdownSend,
-    bool waitForHello = true, int localPort = 0)
+    bool waitForHello = true, int localPort = 0, bool remoteSite = false)
 {
+    /// <summary>The peer is another rtltcp.server (QUIC from a remote site).</summary>
+    public bool RemoteSite { get; } = remoteSite;
+
     /// <summary>TCP port the client connected to (0 = not a TCP connection).</summary>
     public int LocalPort { get; } = localPort;
 
@@ -82,6 +85,10 @@ internal sealed class ClientSession : IStreamOwner
     public IPAddress RemoteIp { get; }
     public string RemoteAddress { get; }
     public long DroppedBuffers => Interlocked.Read(ref _dropped);
+    public long BytesSent => Interlocked.Read(ref _sent);
+    public bool IsRemoteSite => _conn.RemoteSite;
+
+    private long _sent;
 
     // ---------------------------------------------------------------- lifecycle
 
@@ -359,6 +366,7 @@ internal sealed class ClientSession : IStreamOwner
                         if (!_v2)
                         {
                             await _net.WriteAsync(iq.Buffer.AsMemory(0, iq.Length), ct);
+                            Interlocked.Add(ref _sent, iq.Length);
                         }
                         else
                         {
@@ -368,6 +376,7 @@ internal sealed class ClientSession : IStreamOwner
                                 new FrameHeader(FrameType.Iq, n).Write(frameHeader);
                                 await _net.WriteAsync(frameHeader, ct);
                                 await _net.WriteAsync(iq.Buffer.AsMemory(pos, n), ct);
+                                Interlocked.Add(ref _sent, FrameHeader.Size + n);
                             }
                         }
                     }

@@ -23,12 +23,6 @@ namespace RtlTcp.Core.Remote;
 [SupportedOSPlatform("macos")]
 public sealed class RemoteDeviceSource(IRemoteConnector connector, ILogger log) : ISdrDeviceSource
 {
-    /// <summary>Manual test mode: fixed address and fingerprint from the device config.</summary>
-    public RemoteDeviceSource(RemoteDeviceConfig config, PeerIdentity identity, ILogger log)
-        : this(new DirectConnector(config, identity), log)
-    {
-    }
-
     /// <summary>Extra time to wait for the remote stick after the connection is up (tests shorten it).</summary>
     internal static TimeSpan OpenTimeout { get; set; } = TimeSpan.FromSeconds(8);
 
@@ -116,23 +110,18 @@ public sealed class RemoteLink(QuicConnection connection, Func<ValueTask>? onClo
     }
 }
 
-/// <summary>Test mode: provider address, port and fingerprint entered by hand.</summary>
+/// <summary>Fixed provider address and fingerprint, without rtl.over.internet. Only used by tests.</summary>
 [SupportedOSPlatform("windows")]
 [SupportedOSPlatform("linux")]
 [SupportedOSPlatform("macos")]
-public sealed class DirectConnector(RemoteDeviceConfig config, PeerIdentity identity) : IRemoteConnector
+internal sealed class DirectConnector(IPEndPoint remote, string fingerprint, string share, PeerIdentity identity) : IRemoteConnector
 {
-    public string Share => config.Share;
-    public string Describe => $"{config.Share} at {config.Host}:{config.Port}";
+    public string Share => share;
+    public string Describe => $"{share} at {remote}";
     public TimeSpan ConnectTimeout => TimeSpan.Zero;
 
-    public async Task<RemoteLink> ConnectAsync(CancellationToken ct)
-    {
-        EndPoint remote = IPAddress.TryParse(config.Host.Trim('[', ']'), out var ip)
-            ? new IPEndPoint(ip, config.Port) : new DnsEndPoint(config.Host, config.Port);
-        return new RemoteLink(await QuicConnection.ConnectAsync(
-            RemoteProtocol.ClientOptions(remote, null, identity, config.Fingerprint), ct));
-    }
+    public async Task<RemoteLink> ConnectAsync(CancellationToken ct) =>
+        new(await QuicConnection.ConnectAsync(RemoteProtocol.ClientOptions(remote, null, identity, fingerprint), ct));
 }
 
 [SupportedOSPlatform("windows")]

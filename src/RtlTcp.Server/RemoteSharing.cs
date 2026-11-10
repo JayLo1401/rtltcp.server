@@ -12,8 +12,8 @@ namespace RtlTcp.Server;
 
 /// <summary>
 /// Host side of sharing sticks between sites: own certificate (data dir, remote/identity.pfx), the control
-/// channels to rtl.over.internet (one per instance, tokens in remote/tokens.json), the manual QUIC listener
-/// (test mode) and the sources for remote sticks. Needs QUIC (Windows 11 / Server 2022, Linux with libmsquic).
+/// channels to rtl.over.internet (one per instance, tokens in remote/tokens.json) and the sources for remote
+/// sticks. Needs QUIC (Windows 11 / Server 2022, Linux with libmsquic).
 /// </summary>
 public sealed class RemoteSharing(string dataDir, ILoggerFactory loggers) : IDisposable
 {
@@ -21,7 +21,6 @@ public sealed class RemoteSharing(string dataDir, ILoggerFactory loggers) : IDis
     private readonly string _dir = Path.Combine(dataDir, "remote");
     private readonly Lock _tokenLock = new();
     private PeerIdentity? _identity;
-    private ShareHost? _host;
     private Dictionary<string, BrokerClient> _brokers = [];
 
     public bool Supported { get; } = QuicConnection.IsSupported && QuicListener.IsSupported;
@@ -29,14 +28,8 @@ public sealed class RemoteSharing(string dataDir, ILoggerFactory loggers) : IDis
     /// <summary>Why remote sharing is not available; null if it is.</summary>
     public string? Unavailable { get; private set; }
 
-    /// <summary>SHA-256 of our certificate; peers enter it to trust this server.</summary>
+    /// <summary>SHA-256 of our certificate (rtl.over.internet passes it to the other side).</summary>
     public string? Fingerprint => _identity?.Fingerprint;
-
-    /// <summary>UDP endpoint the manual listener is bound to, null if not listening.</summary>
-    public IPEndPoint? ListenEndPoint => _host?.LocalEndPoint;
-
-    /// <summary>Error of the last listener start (e.g. port in use).</summary>
-    public string? ListenError { get; private set; }
 
     /// <summary>Stable id of this server towards rtl.over.internet (remote/server-id).</summary>
     public string ServerId { get; private set; } = "";
@@ -75,7 +68,6 @@ public sealed class RemoteSharing(string dataDir, ILoggerFactory loggers) : IDis
     /// <summary>Instance and providing site of a remote stick (names as the broker reports them now).</summary>
     public RtlTcp.Core.Protocol.RemoteOrigin OriginOf(RemoteDeviceConfig remote)
     {
-        if (remote.Instance.Length == 0) return new(null, remote.Host);
         var b = Broker(remote.Instance);
         var share = b?.Shares.FirstOrDefault(s => s.ShareId == remote.Share);
         return new(b?.InstanceName, share?.ProviderName);
@@ -91,40 +83,22 @@ public sealed class RemoteSharing(string dataDir, ILoggerFactory loggers) : IDis
     public ISdrDeviceSource SourceFor(RemoteDeviceConfig remote, ILogger deviceLog)
     {
         if (!Supported || _identity is null) return new UnavailableSource(Unavailable ?? "QUIC nicht verfügbar");
-        IRemoteConnector connector = remote.Instance.Length > 0
-            ? new BrokerConnector(() => Broker(remote.Instance), remote.Share)
-            : new DirectConnector(remote, _identity);
-        return new RemoteDeviceSource(connector, deviceLog);
+        if (remote.Instance.Length == 0)
+            return new UnavailableSource("Direct connection (test mode) is no longer supported: add the stick again from an instance");
+        return new RemoteDeviceSource(new BrokerConnector(() => Broker(remote.Instance), remote.Share), deviceLog);
     }
 
     // ---------------------------------------------------------------- start / stop
 
-    public async Task StartAsync(ServerConfig cfg, string version, IReadOnlyList<DeviceManager> managers)
+    public Task StartAsync(ServerConfig cfg, string version, IReadOnlyList<DeviceManager> managers)
     {
-        ListenError = null;
-        if (!Supported || _identity is null) return;
+        if (!Supported || _identity is null) return Task.CompletedTask;
 
         DeviceManager? Find(string serial) => managers.FirstOrDefault(m => m.Config.Remote is null &&
             (string.Equals(m.Config.Serial, serial, StringComparison.OrdinalIgnoreCase) ||
              string.Equals(m.OpenSerial, serial, StringComparison.OrdinalIgnoreCase)));
 
         var r = cfg.Remote;
-        if (r.ListenPort > 0)
-        {
-            try
-            {
-                var bind = IPAddress.TryParse(r.Bind, out var a) ? a : IPAddress.IPv6Any;
-                var host = new ShareHost(new IPEndPoint(bind, r.ListenPort), _identity, () => r.Peers, Find, version, _log);
-                await host.StartAsync();
-                _host = host;
-            }
-            catch (Exception ex) when (ex is QuicException or System.Net.Sockets.SocketException or PlatformNotSupportedException)
-            {
-                ListenError = ex.Message;
-                _log.LogError("Remote sharing: cannot listen on udp {Bind}:{Port}: {Error}", r.Bind, r.ListenPort, ex.Message);
-            }
-        }
-
         var tokens = LoadTokens();
         var brokers = new Dictionary<string, BrokerClient>();
         foreach (var inst in r.Instances.Where(i => i.Enabled))
@@ -142,6 +116,7 @@ public sealed class RemoteSharing(string dataDir, ILoggerFactory loggers) : IDis
             brokers[inst.Id] = client;
         }
         _brokers = brokers;
+        return Task.CompletedTask;
     }
 
     private static string StateOf(DeviceManager m) => m.State switch
@@ -155,9 +130,6 @@ public sealed class RemoteSharing(string dataDir, ILoggerFactory loggers) : IDis
 
     public async Task StopAsync()
     {
-        var host = _host;
-        _host = null;
-        if (host is not null) await host.DisposeAsync();
         var brokers = _brokers;
         _brokers = [];
         foreach (var b in brokers.Values) await b.DisposeAsync();
