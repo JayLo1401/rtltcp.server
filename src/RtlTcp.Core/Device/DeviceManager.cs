@@ -46,6 +46,9 @@ public interface IStreamOwner
     void OnCommandRejected(Command command, string reason);
 
     void OnKicked();
+
+    /// <summary>A local client took the stick over (local clients have priority over remote sites).</summary>
+    void OnPreempted(string by) => OnKicked();
 }
 
 public sealed record TunerSnapshot(TunerType Type, string Name, int[] Gains);
@@ -180,15 +183,31 @@ public sealed class DeviceManager : IAsyncDisposable
 
     // ---------------------------------------------------------------- public API (thread-safe)
 
-    /// <summary>Takes ownership. Returns false (and the current owner) if another client owns the stick.</summary>
+    /// <summary>
+    /// Takes ownership. Returns false (and the current owner) if another client owns the stick.
+    /// Local clients have priority: a local client takes the stick from a remote site (rtl.over.internet),
+    /// which is then disconnected.
+    /// </summary>
     public bool TryAcquire(IStreamOwner owner, out IStreamOwner? current)
     {
+        IStreamOwner? preempted = null;
         lock (_ownerLock)
         {
             current = _owner;
-            if (current is not null) return false;
+            if (current is not null)
+            {
+                if (!current.IsRemoteSite || owner.IsRemoteSite) return false;
+                preempted = current;
+            }
             Volatile.Write(ref _owner, owner);
             OwnerSince = DateTimeOffset.Now;
+        }
+        if (preempted is not null)
+        {
+            // the old session's Release is a no-op now (it no longer owns the stick); the stream keeps running
+            _log.LogInformation("{Device}: local client {Client} has priority, disconnecting remote site {Remote}",
+                Config.Name, owner.RemoteAddress, preempted.RemoteAddress);
+            preempted.OnPreempted(owner.RemoteAddress);
         }
         _log.LogInformation("{Device}: client {Client} connected", Config.Name, owner.RemoteAddress);
         Post(new OwnerChanged(owner));

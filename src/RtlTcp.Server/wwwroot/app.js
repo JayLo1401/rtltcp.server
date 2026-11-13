@@ -113,11 +113,19 @@ async function loadSession() {
 function route() {
   clearInterval(pollTimer);
   pollTimer = null;
-  if (!session.loggedIn) { nav.hidden = true; return renderLogin(); }
-  if (session.mustChangePassword) { nav.hidden = true; return renderForcePasswordChange(); }
+  let page = (location.hash.match(/^#\/(\w+)/) || [])[1];
+  const anonymous = !session.loggedIn;
+  if (session.loggedIn && session.mustChangePassword) { nav.hidden = true; return renderForcePasswordChange(); }
   nav.hidden = false;
-  document.getElementById('logout').hidden = !!session.ingress; // in Home Assistant, HA handles the login
-  const page = (location.hash.match(/^#\/(\w+)/) || [])[1];
+  for (const a of nav.querySelectorAll('.admin-only')) a.hidden = anonymous;
+  document.getElementById('logout').hidden = anonymous || !!session.ingress; // in Home Assistant, HA handles the login
+  document.getElementById('login').hidden = !anonymous;
+  // Without login only the status page is public; every other page asks for the login first.
+  if (anonymous && page && page !== 'status') {
+    for (const a of nav.querySelectorAll('a[aria-current]')) a.removeAttribute('aria-current');
+    return renderLogin();
+  }
+  if (page === 'login') { history.replaceState(null, '', '#/status'); page = 'status'; }
   const name = pages[page] ? page : 'status';
   for (const a of nav.querySelectorAll('a')) a.toggleAttribute('aria-current', a.getAttribute('href') === '#/' + name);
   for (const a of nav.querySelectorAll('a[aria-current]')) a.setAttribute('aria-current', 'page');
@@ -128,6 +136,7 @@ window.addEventListener('hashchange', route);
 document.getElementById('logout').addEventListener('click', () => guarded(null, async () => {
   await api('POST', '/logout');
   session.loggedIn = false;
+  history.replaceState(null, '', '#/status');
   route();
 }));
 
@@ -203,6 +212,7 @@ const STATE = {
 };
 
 async function renderStatus() {
+  const admin = session.loggedIn; // without login: read only (no disconnect, no update, no device setup)
   const head = h('div', { class: 'page-head' }, h('h1', { text: 'Status' }));
   const body = h('div');
   setPage(head, body);
@@ -244,7 +254,7 @@ async function renderStatus() {
           ['notready', 'lost', 'error'].includes(d.state) ? [h('dt', { text: 'Meldung' }), h('dd', { text: d.message })] : null),
         d.client && (d.isRemote || d.clientIsRemoteSite) ? h('p', { class: 'muted small',
           text: 'Weniger Datenrate übers Internet: im Client eine kleinere Samplerate wählen, z. B. 1,024 MS/s ≈ 16 Mbit/s.' }) : null,
-        d.client ? h('div', { class: 'buttons' }, h('button', {
+        d.client && admin ? h('div', { class: 'buttons' }, h('button', {
           class: 'btn small danger', text: 'Client trennen',
           onclick: (e) => guarded(e.target, async () => {
             if (!confirm(`Client ${d.client} von „${d.name}“ trennen?`)) return;
@@ -255,9 +265,9 @@ async function renderStatus() {
         })) : null);
     });
 
-    const fresh = s.sticks.filter((x) => x.serial && !x.configured);
+    const fresh = admin ? s.sticks.filter((x) => x.serial && !x.configured) : [];
     fill(body,
-      s.updateVersion ? h('div', { class: 'notice ok' },
+      s.updateVersion && admin ? h('div', { class: 'notice ok' },
         h('p', {}, h('strong', { text: `Update verfügbar: Version ${s.updateVersion}` }), ` (installiert: ${s.version}). `,
           s.updateCanInstall
             ? h('button', { class: 'btn small primary', text: 'Jetzt aktualisieren', onclick: (e) => startUpdate(e.target) })

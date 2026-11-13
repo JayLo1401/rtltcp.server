@@ -73,6 +73,9 @@ public static class ErrorCodes
 {
     public const string Busy = "BUSY";
     public const string Kicked = "KICKED";
+
+    /// <summary>Remote site: a local client at the provider took the stick over (local clients have priority).</summary>
+    public const string Preempted = "PREEMPTED";
     public const string InvalidCommand = "INVALID_COMMAND";
     public const string ProtocolError = "PROTOCOL_ERROR";
 

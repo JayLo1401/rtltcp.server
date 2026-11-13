@@ -9,7 +9,7 @@ using RtlTcp.Server.Logging;
 
 namespace RtlTcp.Server.Web;
 
-/// <summary>REST API for the web GUI. Everything except session/setup/login requires an admin cookie.</summary>
+/// <summary>REST API for the web GUI. Everything except session/login/status (read only) requires an admin cookie.</summary>
 public static class WebApi
 {
     /// <summary>Custom header required on every state-changing request (blocks cross-site form posts).</summary>
@@ -157,8 +157,11 @@ public static class WebApi
             return Results.Ok();
         });
 
-        admin.MapGet("/status", (StreamHostService host, ServerConfigHolder cfg, UpdateService update) =>
+        // Status is readable without login (like a status page); disconnecting a client needs the login.
+        // Without login: no USB stick list and no update info (only needed for administration).
+        api.MapGet("/status", (HttpContext ctx, StreamHostService host, ServerConfigHolder cfg, UpdateService update) =>
         {
+            var loggedIn = ctx.User.Identity?.IsAuthenticated == true;
             var managers = host.Managers.ToDictionary(m => m.Config.Port);
             var devices = cfg.Current.Devices.Select(d =>
             {
@@ -173,6 +176,8 @@ public static class WebApi
                     m?.Details.Location ?? NullIfEmpty(d.Location), m?.Details.Antenna ?? NullIfEmpty(d.Antenna),
                     d.Remote is not null, m?.Owner?.BytesSent ?? 0, m?.Owner?.DroppedBuffers ?? 0, m?.Owner?.IsRemoteSite ?? false);
             }).ToList();
+            var r = host.Remote;
+            if (!loggedIn) return new StatusDto(StreamHostService.Version, devices, [], null, false, new RemoteStatusDto(r.Unavailable));
             var configured = cfg.Current.Devices.Select(d => d.Serial).ToHashSet();
             // A stick that is open (by us) cannot be opened again to read its serial (Windows) → add our open sticks.
             var sticks = host.ConnectedSticks().Where(s => s.Serial is not null)
@@ -181,7 +186,6 @@ public static class WebApi
             foreach (var m in host.Managers.Where(m => m.Config.Remote is null)) // remote sticks are not local USB sticks
                 if (m.OpenSerial is { } serial && sticks.All(s => s.Serial != serial))
                     sticks.Add(new StickDto(serial, "in Verwendung", "", configured.Contains(serial)));
-            var r = host.Remote;
             return new StatusDto(StreamHostService.Version, devices, sticks,
                 update.UpdateAvailable ? update.Latest!.Version : null, update.CanInstall,
                 new RemoteStatusDto(r.Unavailable));

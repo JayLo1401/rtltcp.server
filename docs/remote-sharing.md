@@ -33,9 +33,13 @@ home.radio / SDR++ ──TCP v1/v2──▶ rtltcp.server ══QUIC/UDP══�
 - Pro Stick ein bidirektionaler QUIC-Stream. Der Nutzer sendet zuerst die Präambel `u8 Länge | Seriennummer`
   (UTF-8), danach läuft eine normale **rtl_tcp Jay extended**-Sitzung (v2, [protocol-v2.md](protocol-v2.md)):
   HELLO, `server_info`, `status`, IQ-Frames und Befehle.
-- **Anbieter:** Der entfernte Client ist ein ganz normaler v2-Client des Sticks. Es gelten die gleiche
-  Belegungsregel (wer zuerst kommt), die Idle-Abschaltung und der Reconnect. `BUSY` und die Statusseite zeigen ihn
-  als „<Name des anderen Servers> (IP)“, und er lässt sich trennen.
+- **Anbieter:** Der entfernte Client ist ein ganz normaler v2-Client des Sticks. Es gelten die Belegungsregel (wer
+  zuerst kommt), die Idle-Abschaltung und der Reconnect. `BUSY` und die Statusseite zeigen ihn als
+  „<Name des anderen Servers> (IP)“, und er lässt sich trennen.
+  - **Lokale Clients haben immer Vorrang:** Verbindet sich ein lokaler Client (direkt per TCP auf den Port),
+    während ein anderer Standort den Stick nutzt, übernimmt der lokale Client sofort. Der andere Standort bekommt
+    `PREEMPTED` und wird getrennt; bis der lokale Client fertig ist, bekommt er `BUSY`. Danach verbindet sich ein
+    rtltcp.server als Nutzer von selbst wieder (mit wachsender Wartezeit, höchstens 30 s).
 - **Nutzer:** Der entfernte Stick ist ein Gerät wie ein USB-Stick, mit eigenem Port für v1 und v2.
   - Die QUIC-Verbindung entsteht erst, wenn ein lokaler Client kommt, und wird beim Trennen sofort
     abgebaut. Es läuft also kein Dauerstream (auch nicht mit Leerlaufzeit 0).

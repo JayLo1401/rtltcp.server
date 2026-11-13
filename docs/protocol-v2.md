@@ -200,6 +200,7 @@ The session **stays open** in all these states; the server retries and reports c
 |--------------------|-------|--------------------------------------------------------------|
 | `BUSY`             | yes   | another client owns the device (first come, first served)    |
 | `KICKED`           | yes   | an administrator disconnected the session                    |
+| `PREEMPTED`        | yes   | remote site only: a local client took the device over (§6); `client` = its IP |
 | `INVALID_COMMAND`  | no    | command rejected (e.g. unsupported sample rate)              |
 | `PROTOCOL_ERROR`   | yes   | malformed frame                                              |
 
@@ -244,8 +245,11 @@ A v1 client gets exactly the classic behaviour:
 ## 6. Device ownership
 
 - One device = one TCP port = at most **one owner**.
-- First connected client owns it until it disconnects ("first come, first served"). This includes clients at
-  other sites that use the stick over rtl.over.internet.
+- First connected client owns it until it disconnects ("first come, first served").
+- **Exception – local clients have priority:** if a site using the stick over rtl.over.internet owns it and a
+  local client (direct TCP connection to the port) connects, the local client takes the device over at once;
+  the remote site receives `PREEMPTED` and is disconnected. It gets `BUSY` until the local client leaves
+  (rtltcp.server as the using site retries automatically with backoff).
 - Further clients: v2 → `BUSY` with the owner (IP, or site and instance), v1 → closed.
 - Administrators can disconnect the owner from the web GUI (owner receives `KICKED`).
 

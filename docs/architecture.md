@@ -77,7 +77,7 @@ sich lokal, den Weg über das Internet übernehmen die Server untereinander (sie
 - **Ersteinrichtung:** `admin` / `admin`, das Passwort muss beim ersten Login geändert werden. Das
   Standardpasswort gilt nur aus privaten Netzen.
 - Die Web-GUI braucht **immer** einen Login (Cookie-Auth). Stream-Clients melden sich nicht an.
-- Seiten: Status (je Stick: Zustand, Client, Datenrate, Trennen), Geräte (USB-Sticks und entfernte Sticks),
+- Seiten: Status (ohne Anmeldung lesbar; je Stick: Zustand, Client, Datenrate, Trennen nur angemeldet), Geräte (USB-Sticks und entfernte Sticks),
   Protokoll, Einstellungen (Teilen über rtl.over.internet, Update, Log, Admin-Passwort).
 - Statisches HTML/JS/CSS in `wwwroot`, eingebettet ins Binary. Design und Farben wie jaycloud.at.
 

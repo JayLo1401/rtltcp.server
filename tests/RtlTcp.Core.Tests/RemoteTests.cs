@@ -225,6 +225,32 @@ public sealed class RemoteTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Local_client_takes_the_stick_from_a_remote_site_which_gets_it_back_afterwards()
+    {
+        if (!Supported) return;
+        var port = StartConsumer();
+        await using var c = await ConnectV2Async(port);
+        await c.ExpectAsync<StatusMessage>(s => s.State == DeviceStates.Ready);
+        Assert.True(_provider.Owner!.IsRemoteSite);
+
+        _localServer = new StreamServer(_provider, "test", NullLogger.Instance);
+        _localServer.Start();
+        await using (var local = await TestClient.ConnectAsync(_localServer.LocalEndPoint!.Port))
+        {
+            Assert.Equal("RTL0"u8.ToArray(), (await local.ReadAsync(V1.HeaderSize))[..4]);
+            Assert.All(await local.ReadAsync(16384), b => Assert.Equal(0x7F, b));
+            Assert.False(_provider.Owner!.IsRemoteSite);
+            // site 2 loses the remote stick and cannot get it back while the local client is there
+            Assert.Equal(DeviceStates.DeviceLost, (await c.ExpectAsync<StatusMessage>(s => s.State != DeviceStates.Ready)).State);
+            await Task.Delay(1500);
+            Assert.False(_provider.Owner!.IsRemoteSite);
+        }
+
+        // local client gone → site 2 reconnects on its own
+        await Eventually(() => _provider.Owner?.IsRemoteSite == true, 15000);
+    }
+
+    [Fact]
     public async Task Lost_connection_is_reestablished_and_settings_are_replayed()
     {
         if (!Supported) return;

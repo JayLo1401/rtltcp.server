@@ -440,4 +440,10 @@ internal sealed class ClientSession : IStreamOwner
         _log.LogInformation("{Client}: disconnected by administrator", RemoteAddress);
         Enqueue(new ErrorMessage(ErrorCodes.Kicked, "Disconnected by administrator", true), closeAfter: true);
     }
+
+    public void OnPreempted(string by)
+    {
+        _log.LogInformation("{Client}: disconnected, local client {By} has priority", RemoteAddress, by);
+        Enqueue(new ErrorMessage(ErrorCodes.Preempted, $"Local client {by} has priority", true, by), closeAfter: true);
+    }
 }
