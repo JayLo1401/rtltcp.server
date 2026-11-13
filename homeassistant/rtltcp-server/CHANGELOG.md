@@ -7,6 +7,14 @@ mit Datum. Steht dort nichts, werden die Commit-Titel seit dem letzten Release e
 
 ## [Unreleased]
 
+## [1.12.0] – 2026-11-13
+
+### Geändert
+- Die Statusseite ist ohne Anmeldung sichtbar (nur lesen). „Client trennen“, Update, Geräte, Protokoll und
+  Einstellungen brauchen weiterhin die Anmeldung.
+- Lokale Clients haben immer Vorrang vor rtl.over.internet: Nutzt ein anderer Standort den Stick und verbindet sich
+  ein lokaler Client, übernimmt der lokale Client und der andere Standort wird getrennt (neuer Fehlercode `PREEMPTED`).
+
 ## [1.11.2] – 2026-11-10
 
 ### Behoben
