@@ -7,6 +7,11 @@ mit Datum. Steht dort nichts, werden die Commit-Titel seit dem letzten Release e
 
 ## [Unreleased]
 
+## [1.12.1] – 2026-11-15
+
+### Behoben
+- Tuner bei Direct Sampling in Standby schalten
+
 ## [1.12.0] – 2026-11-13
 
 ### Geändert
