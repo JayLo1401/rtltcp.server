@@ -115,14 +115,25 @@ public sealed class RtlSdrDevice : IDisposable
     /// <summary>Safe while streaming (no FIFO reset here; resetting the endpoint during transfers stalls the pipe).</summary>
     public double SetSampleRate(uint rate) => _demod.SetSampleRate(rate);
 
+    // Last gain request; in direct sampling mode the tuner sleeps, so it is only stored and applied on leaving it.
+    private bool _autoGain = true;
+    private int? _manualGain;
+
     public void SetAutoGain(bool auto)
     {
-        if (_tuner is null) return;
-        if (auto) WithTuner(t => t.SetAutoGain());
-        else WithTuner(t => t.SetManualGain(Gains.Count > 0 ? Gains[^1] : 0));
+        _autoGain = auto;
+        if (!auto) _manualGain = Gains.Count > 0 ? Gains[^1] : 0;
+        if (_tuner is null || DirectSampling != 0) return;
+        ApplyGain();
     }
 
-    public int SetGain(int tenthDb) => _tuner is null ? 0 : WithTuner(t => t.SetManualGain(tenthDb));
+    public int SetGain(int tenthDb)
+    {
+        _autoGain = false;
+        _manualGain = tenthDb;
+        if (_tuner is null) return 0;
+        return DirectSampling != 0 ? tenthDb : WithTuner(t => t.SetManualGain(tenthDb));
+    }
 
     public int SetGainByIndex(int index) =>
         Gains.Count == 0 ? 0 : SetGain(Gains[Math.Clamp(index, 0, Gains.Count - 1)]);
@@ -130,10 +141,13 @@ public sealed class RtlSdrDevice : IDisposable
     public void SetFreqCorrection(int ppm)
     {
         _demod.SetFreqCorrection(ppm);
-        if (_tuner is null) return;
-        WithTuner(t => t.SetXtal(_demod.CorrectedXtal));
-        _demod.SetIfFrequency(_tuner.IfFrequency);
-        if (CenterFrequency != 0) SetCenterFrequency(CenterFrequency);
+        if (_tuner is not null)
+        {
+            WithTuner(t => t.SetXtal(_demod.CorrectedXtal));
+            if (DirectSampling == 0) _demod.SetIfFrequency(_tuner.IfFrequency);
+        }
+        // In direct sampling the DDC runs at the center frequency, which depends on the corrected crystal.
+        if (DirectSampling != 0 || CenterFrequency != 0) SetCenterFrequency(CenterFrequency);
     }
 
     public void SetAgc(bool on) => _demod.SetAgc(on);
@@ -142,12 +156,27 @@ public sealed class RtlSdrDevice : IDisposable
 
     public void SetBiasTee(bool on) => _demod.SetBiasTee(on);
 
+    /// <summary>
+    /// Like librtlsdr: entering direct sampling puts the tuner into standby (otherwise its last frequency
+    /// leaks into the Q-ADC); leaving it re-initializes the tuner and restores the gain.
+    /// </summary>
     public void SetDirectSampling(int mode)
     {
+        if (mode != 0 && _tuner is not null) WithTuner(t => t.Standby());
         _demod.SetDirectSampling(mode);
         DirectSampling = mode;
-        if (mode == 0) InitTuner();
+        if (mode == 0 && _tuner is not null)
+        {
+            InitTuner();
+            ApplyGain();
+        }
         if (CenterFrequency != 0) SetCenterFrequency(CenterFrequency);
+    }
+
+    private void ApplyGain()
+    {
+        if (_autoGain) WithTuner(t => t.SetAutoGain());
+        else WithTuner(t => t.SetManualGain(_manualGain ?? (Gains.Count > 0 ? Gains[^1] : 0)));
     }
 
     public IBulkStream StartStream(IBulkSink sink)
